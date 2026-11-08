@@ -339,6 +339,21 @@ export function sendLine(line: string): void {
   socket.emit('writeln', port, line, { __sender__: clientId });
 }
 
+/**
+ * Real-time overrides (CNCjs `feedOverride` / `spindleOverride` → GRBL 0x90–0x94 / 0x99–0x9D).
+ * `step` is +10, −10, +1, −1, or 0 to reset to 100 %. Real-time bytes: safe while a job streams.
+ */
+export type OverrideKind = 'feed' | 'spindle';
+export type OverrideStep = 10 | -10 | 1 | -1 | 0;
+
+export function sendOverride(kind: OverrideKind, step: OverrideStep): void {
+  const { port, phase } = getState().connection;
+  if (!socket || !port || phase !== 'open') {
+    return;
+  }
+  socket.emit('command', port, kind === 'feed' ? 'feedOverride' : 'spindleOverride', step);
+}
+
 export function clearConnectionError(): void {
   setState((s) => ({ ...s, connection: { ...s.connection, error: null } }));
 }

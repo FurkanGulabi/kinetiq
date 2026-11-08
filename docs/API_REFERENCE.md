@@ -219,6 +219,15 @@ The backend has no explicit "connecting" or "lost" event. Both are client-side d
 | Resume *(D4)* | `command(port, 'gcode:resume')` | writes `~`; workflow → running |
 | Stop *(D4)* | Kinetiq sequence: `gcode:pause` → wait for `activeState === 'Hold' && subState === 0` → `command(port, 'gcode:stop', { force: true })` | workflow → idle; Sender rewinds; soft reset `0x18` if in Hold |
 
+**Overrides** (Job panel, any time the controller is reporting, including while a job runs):
+
+| Action | Emit | Bytes |
+|---|---|---|
+| Feed override +10 / −10 / +1 / −1 / reset 100 % | `command(port, 'feedOverride', 10 \| -10 \| 1 \| -1 \| 0)` | `0x91 / 0x92 / 0x93 / 0x94 / 0x90` |
+| Spindle override, same steps | `command(port, 'spindleOverride', …)` | `0x9A / 0x9B / 0x9C / 0x9D / 0x99` |
+
+Real-time bytes (`GrblController.js` feedOverride/spindleOverride), so they never disturb streaming (no hazard H1). The displayed percentages are the controller's `Ov:feed,rapid,spindle` report (`status.ov`, kept by GrblRunner between reports); "—" until the first `Ov:`. GRBL range 10–200 %; the buttons disable at the limits. **Observed on FluidNC v4.0.1 during a running job:** Feed +10 → `Ov` 110 %, reset → 100 %. A spindle −1 % with the spindle off left `Ov` spindle at 100 %.
+
 ### 7.2 Job state [Kinetiq-derived]
 
 The backend exposes only `idle | running | paused`. Kinetiq derives six display states from `workflow:state` plus `sender:status`:

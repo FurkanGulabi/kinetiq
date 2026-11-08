@@ -432,3 +432,36 @@ const HOLD_LABELS: Record<string, string> = {
   M6: 'Tool change (M6)',
   '%wait': 'Waiting for the planner to empty',
 };
+
+/* ------------------------------------------------------------------------------------------------
+ * Overrides — GRBL real-time feed / spindle overrides (10–200 %)
+ * ---------------------------------------------------------------------------------------------- */
+
+export const OVERRIDE_MIN = 10;
+export const OVERRIDE_MAX = 200;
+
+export interface OverridesView {
+  available: boolean;
+  reason: string | null;
+  /** Percent from the last `Ov:` report; null until the controller has reported one. */
+  feed: number | null;
+  spindle: number | null;
+  /** Live values from `FS:` (units/min, rpm). */
+  feedrate: number | null;
+  spindleSpeed: number | null;
+}
+
+export function overridesView(s: MachineState): OverridesView {
+  const status = s.controller.state?.status;
+  const ready = s.connection.phase === 'open' && Boolean(status?.activeState);
+  const ov = status?.ov ?? [];
+  const pct = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return {
+    available: ready,
+    reason: s.connection.phase !== 'open' ? 'Connect to a controller first' : ready ? null : 'Waiting for controller status',
+    feed: ready ? pct(ov[0]) : null,
+    spindle: ready ? pct(ov[2]) : null,
+    feedrate: ready ? pct(status?.feedrate) : null,
+    spindleSpeed: ready ? pct(status?.spindle) : null,
+  };
+}

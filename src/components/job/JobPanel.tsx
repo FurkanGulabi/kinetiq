@@ -24,6 +24,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Meter } from '@/components/ui/Meter';
 import { Panel } from '@/components/ui/Panel';
 import { StatusBadge, type BadgeIcon } from '@/components/ui/StatusBadge';
+import { Overrides } from './Overrides';
 import { RecentJobs } from './RecentJobs';
 import { UploadDialog } from './UploadDialog';
 
@@ -272,6 +273,8 @@ export function JobPanel() {
               hint="Exact time the planner drained. Shown only when the job completes."
             />
           </div>
+
+          <Overrides />
 
           {/* Controls */}
           <div className="flex items-center gap-2 border-t border-line pt-3">

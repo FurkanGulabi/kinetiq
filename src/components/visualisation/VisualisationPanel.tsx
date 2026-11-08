@@ -143,10 +143,17 @@ export default function VisualisationPanel() {
       }, 0);
     };
 
-    // Executed portion: lines acknowledged by the controller while a job runs.
+    // Passed lines: acknowledged by the controller while a job runs; all of them once it completed
+    // (the backend rewinds the Sender at the end, so received drops back to 0).
     const updateProgress = () => {
       const s = getState();
-      scene.setProgramProgress(s.workflow !== 'idle' && s.sender ? s.sender.received : null);
+      const sender = s.sender;
+      let done: number | null = null;
+      if (s.program && sender) {
+        if (s.workflow !== 'idle') done = sender.received;
+        else if (sender.startTime > 0 && sender.finishTime > 0) done = sender.total;
+      }
+      scene.setProgramProgress(done);
     };
 
     const onStore = () => {
@@ -273,7 +280,7 @@ export default function VisualisationPanel() {
                 <span className="inline-block h-0.5 w-3 bg-accent" aria-hidden /> Program
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="inline-block h-0.5 w-3 bg-[#2f6a94]" aria-hidden /> Done / path
+                <span className="inline-block h-0.5 w-3 bg-[#5c626a]" aria-hidden /> Done
               </span>
               {showRapids ? (
                 <span className="flex items-center gap-1.5">

@@ -30,12 +30,12 @@ const COLORS = {
   accentDim: 0x2f6a94,
 };
 
-/** Toolpath colours (rgb + alpha): remaining feeds carry the accent; executed work recedes. */
+/** Toolpath colours (rgb + alpha): remaining feeds carry the accent; passed lines are greyed out. */
 const PROGRAM_COLORS = {
-  feed: [0x5a / 255, 0xb8 / 255, 0xff / 255, 0.95],
-  feedDone: [0x2f / 255, 0x6a / 255, 0x94 / 255, 0.9],
+  feed: [0x5a / 255, 0xb8 / 255, 0xff / 255, 1],
+  feedDone: [0x5c / 255, 0x62 / 255, 0x6a / 255, 1],
   rapid: [0xa1 / 255, 0xa7 / 255, 0xaf / 255, 0.4],
-  rapidDone: [0xa1 / 255, 0xa7 / 255, 0xaf / 255, 0.14],
+  rapidDone: [0xa1 / 255, 0xa7 / 255, 0xaf / 255, 0.12],
 } as const;
 
 const PROGRAM_VERTEX = /* glsl */ `
@@ -67,6 +67,29 @@ const PROGRAM_FRAGMENT = /* glsl */ `
     gl_FragColor = color;
   }
 `;
+
+/** Segments of one kind (0 rapid, 1 feed) with their line index attribute; null if there are none. */
+function buildProgramGeometry(toolpath: Toolpath, kind: 0 | 1): THREE.BufferGeometry | null {
+  let count = 0;
+  for (let i = 0; i < toolpath.segmentCount; i++) if (toolpath.kinds[i] === kind) count++;
+  if (count === 0) return null;
+  const positions = new Float32Array(count * 6);
+  const lineAttr = new Float32Array(count * 2);
+  const kindAttr = new Float32Array(count * 2).fill(kind);
+  let j = 0;
+  for (let i = 0; i < toolpath.segmentCount; i++) {
+    if (toolpath.kinds[i] !== kind) continue;
+    positions.set(toolpath.positions.subarray(i * 6, i * 6 + 6), j * 6);
+    lineAttr[j * 2] = lineAttr[j * 2 + 1] = toolpath.lines[i];
+    j++;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('aLine', new THREE.BufferAttribute(lineAttr, 1));
+  geometry.setAttribute('aKind', new THREE.BufferAttribute(kindAttr, 1));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
 
 const GRID_SIZE = 600; // mm, centred on the work origin
 const GRID_MINOR = 10;
@@ -140,7 +163,7 @@ export class MachineScene {
   private trailCount = 0;
   private lastTrailPoint: THREE.Vector3 | null = null;
 
-  private program: THREE.LineSegments | null = null;
+  private program = new THREE.Group();
   private programBounds: THREE.Box3 | null = null;
   private programUniforms = {
     uDone: { value: -1 },
@@ -291,35 +314,31 @@ export class MachineScene {
 
   /** Show a parsed program (work coordinates, mm); null removes it. Frames the program when shown. */
   setToolpath(toolpath: Toolpath | null): void {
-    if (this.program) {
-      this.scene.remove(this.program);
-      this.program.geometry.dispose();
-      (this.program.material as THREE.Material).dispose();
-      this.program = null;
-      this.programBounds = null;
+    this.scene.remove(this.program);
+    for (const child of [...this.program.children] as THREE.LineSegments[]) {
+      this.program.remove(child);
+      child.geometry.dispose();
+      (child.material as THREE.Material).dispose();
     }
+    this.programBounds = null;
+
     if (toolpath && toolpath.segmentCount > 0) {
-      const n = toolpath.segmentCount;
-      const lineAttr = new Float32Array(n * 2);
-      const kindAttr = new Float32Array(n * 2);
-      for (let i = 0; i < n; i++) {
-        lineAttr[i * 2] = lineAttr[i * 2 + 1] = toolpath.lines[i];
-        kindAttr[i * 2] = kindAttr[i * 2 + 1] = toolpath.kinds[i];
+      // Feeds are opaque and depth-tested, so an upper (passed, grey) layer hides the deeper passes
+      // below it; rapids are translucent and drawn after them without writing depth.
+      for (const kind of [1, 0] as const) {
+        const geometry = buildProgramGeometry(toolpath, kind);
+        if (!geometry) continue;
+        const material = new THREE.ShaderMaterial({
+          vertexShader: PROGRAM_VERTEX,
+          fragmentShader: PROGRAM_FRAGMENT,
+          uniforms: this.programUniforms,
+          transparent: kind === 0,
+          depthWrite: kind === 1,
+        });
+        const lines = new THREE.LineSegments(geometry, material);
+        lines.renderOrder = kind === 1 ? 1 : 2;
+        this.program.add(lines);
       }
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(toolpath.positions, 3));
-      geometry.setAttribute('aLine', new THREE.BufferAttribute(lineAttr, 1));
-      geometry.setAttribute('aKind', new THREE.BufferAttribute(kindAttr, 1));
-      geometry.computeBoundingSphere();
-      const material = new THREE.ShaderMaterial({
-        vertexShader: PROGRAM_VERTEX,
-        fragmentShader: PROGRAM_FRAGMENT,
-        uniforms: this.programUniforms,
-        transparent: true,
-        depthWrite: false,
-      });
-      this.program = new THREE.LineSegments(geometry, material);
-      this.program.renderOrder = 1;
       this.program.visible = this.programVisible;
       this.scene.add(this.program);
       const b = toolpath.bounds;
@@ -338,7 +357,7 @@ export class MachineScene {
   }
 
   setProgramVisible(visible: boolean): void {
-    if (this.program) this.program.visible = visible;
+    this.program.visible = visible;
     this.programVisible = visible;
     this.requestRender();
   }

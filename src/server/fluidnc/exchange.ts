@@ -12,11 +12,14 @@
  * SERVER-ONLY. See docs/SETTINGS_EDITOR.md §3.2.
  */
 import type { EventEmitter } from 'node:events';
+import type { RawPort } from './xmodem';
 
 export interface FluidncController {
   isOpen(): boolean;
   writeln(data: string, context?: Record<string, unknown>): void;
-  connection: EventEmitter | null;
+  /** Kinetiq hook in GrblController: pause polling and Feeder writes (XModem transfer). */
+  setExclusive(exclusive: boolean): void;
+  connection: (EventEmitter & { port?: RawPort | null }) | null;
   workflow: { state: string } | null;
   runner: {
     state: { status?: { activeState?: string } };
@@ -31,7 +34,19 @@ interface ControllerStore {
 export class ExchangeError extends Error {
   constructor(
     readonly status: number,
-    readonly code: 'not-connected' | 'not-idle' | 'busy' | 'timeout' | 'controller-error' | 'closed',
+    readonly code:
+      | 'not-connected'
+      | 'not-idle'
+      | 'busy'
+      | 'timeout'
+      | 'controller-error'
+      | 'closed'
+      | 'changed'
+      | 'invalid'
+      | 'no-space'
+      | 'upload-failed'
+      | 'verify-failed'
+      | 'not-found',
     message: string,
   ) {
     super(message);
@@ -85,8 +100,11 @@ export function isExchangeBusy(): boolean {
 /**
  * Sends one command and resolves with its reply lines (without the final `ok`).
  * Rejects on `error:N`, on timeout, or if the port closes meanwhile.
+ * With `command: null` nothing is written: it only waits for the next reply (used after an XModem
+ * transfer, which FluidNC finishes with "Received N bytes" and `ok`).
  */
-export function exchange(controller: FluidncController, command: string, timeoutMs = 15000): Promise<string[]> {
+export function exchange(controller: FluidncController, command: string | null, timeoutMs = 15000): Promise<string[]> {
+  const label = command ?? 'reply';
   const connection = controller.connection;
   if (!connection || !controller.isOpen()) {
     return Promise.reject(new ExchangeError(412, 'not-connected', 'Connect to the controller first'));
@@ -124,7 +142,7 @@ export function exchange(controller: FluidncController, command: string, timeout
         return;
       }
       if (/^error:/i.test(trimmed)) {
-        finish(new ExchangeError(502, 'controller-error', `${command} → ${trimmed}`));
+        finish(new ExchangeError(502, 'controller-error', `${label} → ${trimmed}`));
         return;
       }
       lines.push(line);
@@ -133,13 +151,15 @@ export function exchange(controller: FluidncController, command: string, timeout
     const onClose = () => finish(new ExchangeError(412, 'closed', 'The serial port closed during the operation'));
 
     const timer = setTimeout(
-      () => finish(new ExchangeError(504, 'timeout', `${command}: no reply within ${timeoutMs / 1000} s`)),
+      () => finish(new ExchangeError(504, 'timeout', `${label}: no reply within ${timeoutMs / 1000} s`)),
       timeoutMs,
     );
 
     connection.on('data', onData);
     connection.on('close', onClose);
-    controller.writeln(command, { source: 'kinetiq:settings' });
+    if (command !== null) {
+      controller.writeln(command, { source: 'kinetiq:settings' });
+    }
   });
 }
 

@@ -157,6 +157,11 @@ class GrblController {
     // Workflow
     workflow = null;
 
+    // Kinetiq: exclusive serial access (settings editor XModem transfer). While set, the query
+    // timer sends no `?`/`$G` and Feeder lines are dropped, so no byte lands inside a binary
+    // transfer. Real-time Hold/Reset written through write() still go out. See setExclusive().
+    exclusive = false;
+
     constructor(engine, options) {
       if (!engine) {
         throw new Error('engine must be specified');
@@ -313,6 +318,13 @@ class GrblController {
         if (this.runner.isAlarm()) {
           this.feeder.reset();
           log.warn('Stopped sending G-code commands in Alarm mode');
+          return;
+        }
+
+        // Kinetiq: drop Feeder lines while the serial port is used exclusively
+        if (this.exclusive) {
+          this.feeder.reset();
+          log.warn('Dropped a G-code command: the serial port is in exclusive use');
           return;
         }
 
@@ -925,6 +937,11 @@ class GrblController {
           this.emit('Grbl:state', this.state); // Backward compatibility
         }
 
+        // Kinetiq: no polling while another component has exclusive use of the serial port
+        if (this.exclusive) {
+          return;
+        }
+
         // Check the ready flag
         if (!(this.ready)) {
           queryActivity();
@@ -1234,6 +1251,16 @@ class GrblController {
 
       this.connection.removeAllListeners();
       this.connection.close(callback);
+    }
+
+    // Kinetiq: claim or release exclusive use of the serial port (see `exclusive` above).
+    setExclusive(exclusive) {
+      this.exclusive = !!exclusive;
+      if (!this.exclusive) {
+        // Let the status/parser-state queries start fresh instead of waiting for replies that
+        // were swallowed during the exclusive period.
+        this.clearActionValues();
+      }
     }
 
     isOpen() {

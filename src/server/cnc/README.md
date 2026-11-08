@@ -8,6 +8,7 @@ This is the CNCjs GRBL server code, carried into Kinetiq so Kinetiq no longer de
   - `services/cncengine/CNCEngine.js`: only the Grbl controller is registered. Marlin, Smoothie and TinyG/g2core imports and branches were removed.
   - `config/settings.js`: replaces `settings.{base,development,production}.js` with the fields the backend reads (`secret`, `rcfile`, `accessTokenLifetime`, `allowRemoteAccess`, `verbosity`, `winston.level`). It no longer imports `package.json`.
 - **Removed later (2026-11-08):** the `tool:change` routine with its `tool.*` config and `TOOL_CHANGE_POLICY_*` constants, and `lasertest:on`/`lasertest:off`. M6 is now always a manual tool-change pause: the M6 word is sent as a comment `(M6)` and the job pauses until Resume (CNCjs's default policy, no longer configurable).
+- **Added later (2026-11-08):** `GrblController.setExclusive(on)` and the `exclusive` flag, used by the settings editor's XModem upload. While on, the query timer sends no `?`/`$G` and Feeder lines are dropped (the Feeder is reset); real-time bytes written through `write()` (Hold, Reset) still go out. Turning it off clears the query masks.
 - **Not carried over:** the Express app, REST API, i18n, views, the Marlin/Smoothie/TinyG controllers and the CNCjs CLI.
 
 ## Security rule: shell commands

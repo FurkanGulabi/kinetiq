@@ -84,7 +84,8 @@ export function setState(updater: (prev: MachineState) => MachineState): void {
   listeners.forEach((listener) => listener());
 }
 
-function subscribe(listener: () => void): () => void {
+/** Low-level subscription for imperative consumers (e.g. the 3D view) that must not re-render React. */
+export function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }

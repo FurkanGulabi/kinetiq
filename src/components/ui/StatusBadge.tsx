@@ -40,7 +40,7 @@ export function StatusBadge({
   return (
     <span
       role="status"
-      className={`inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-[12px] font-medium ${TONE_CLASS[tone]} ${className}`}
+      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-[12px] font-medium ${TONE_CLASS[tone]} ${className}`}
     >
       <Icon aria-hidden size={12} strokeWidth={2.5} className={icon === 'busy' ? 'animate-spin motion-reduce:animate-none' : ''} />
       <span>{label}</span>

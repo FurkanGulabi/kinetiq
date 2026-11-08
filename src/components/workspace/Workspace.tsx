@@ -2,14 +2,24 @@
 
 /**
  * Single-page workspace. Milestone 1: top bar with the Connection widget, machine-state badge,
- * backend-offline strip and connection errors. Position, Job and Console panels arrive in M2–M5.
+ * backend-offline strip and connection errors; Position & Jog (left), Job and the live 3D Visualisation (right).
  */
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, Octagon, X } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { useEffect } from 'react';
 import { clearConnectionError, startClient } from '@/lib/cnc/client';
 import { connectionErrorMessage, machineStateView } from '@/lib/cnc/derive';
 import { useMachine } from '@/lib/cnc/store';
 import { ConnectionBar } from '@/components/connection/ConnectionBar';
+import { MachineControls } from '@/components/safety/MachineControls';
+import { PositionPanel } from '@/components/position/PositionPanel';
+import { Panel } from '@/components/ui/Panel';
+
+// three.js is loaded only in the browser and only for this panel.
+const VisualisationPanel = dynamic(() => import('@/components/visualisation/VisualisationPanel'), {
+  ssr: false,
+  loading: () => <section aria-label="Visualisation" className="bg-surface" />,
+});
 import { StatusBadge, type BadgeIcon } from '@/components/ui/StatusBadge';
 
 function Wordmark() {
@@ -56,7 +66,19 @@ export function Workspace() {
             className="tracking-[0.06em]"
           />
         ) : null}
+        <MachineControls />
       </header>
+
+      {stateView?.label === 'Alarm' && !backendDown ? (
+        <div role="status" className="flex items-center gap-2 border-b border-line bg-surface px-4 py-2 text-[13px] text-ink-2">
+          <Octagon size={14} className="text-crit" aria-hidden />
+          <span>
+            Controller is in <span className="text-ink">Alarm</span>. Motion is blocked until you{' '}
+            <span className="text-ink">Home</span> ($H) or <span className="text-ink">Unlock</span> ($X). Reset alone
+            does not clear an alarm when homing is enabled.
+          </span>
+        </div>
+      ) : null}
 
       {backendDown ? (
         <div role="alert" className="flex items-center gap-2 border-b border-crit/40 bg-crit/10 px-4 py-2 text-[13px] text-ink">
@@ -82,8 +104,15 @@ export function Workspace() {
         </div>
       ) : null}
 
-      <main className="flex flex-1 items-center justify-center text-ink-3">
-        <p className="panel-label">Position · Job · Console — arrive in the next milestones</p>
+      {/* 1 px gaps let --bg show through as hairlines between flat panels (ARCHITECTURE §10.1). */}
+      <main className="grid min-h-0 flex-1 grid-cols-[560px_1fr] gap-px bg-line">
+        <PositionPanel />
+        <div className="grid min-h-0 grid-rows-[auto_1fr] gap-px">
+          <Panel title="Job">
+            <p className="py-6 text-center text-[12px] text-ink-3">Job status arrives in a later milestone.</p>
+          </Panel>
+          <VisualisationPanel />
+        </div>
       </main>
     </div>
   );

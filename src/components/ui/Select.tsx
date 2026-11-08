@@ -27,7 +27,8 @@ export function Select({
   className?: string;
 }) {
   return (
-    <RadixSelect.Root value={value} onValueChange={onValueChange} disabled={disabled}>
+    // Always controlled: '' shows the placeholder (avoids React's uncontrolled→controlled warning).
+    <RadixSelect.Root value={value ?? ''} onValueChange={onValueChange} disabled={disabled}>
       <RadixSelect.Trigger
         aria-label={ariaLabel}
         className={`pressable inline-flex h-8 min-w-0 items-center justify-between gap-2 rounded-md border border-line bg-surface-2 px-2.5 text-left text-[13px] text-ink hover-fine:border-ink-3 disabled:cursor-not-allowed disabled:text-ink-3 data-[placeholder]:text-ink-3 ${className}`}

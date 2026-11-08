@@ -269,6 +269,10 @@ Completed and Cancelled can be rebuilt from server state after a page reload. Te
 | Jog one step | `command(port, 'gcode', '$J=G91 G21 X10 F1000', { __sender__: clientId })`: one axis per press, signed distance, `G21` (or `G20` when the UI is in inches), feed in units/min |
 | Cancel jog | `command(port, 'jogCancel')` → real-time `0x85` (`GrblController.js:1515-1518`) |
 
+| Go to (one axis) | `command(port, 'gcode', '$J=G90 G21 X11 F1000', ctx)`: absolute jog in work coordinates at the jog feed |
+| Zero (one axis) | `command(port, 'gcode', 'G10 L20 P1 X0', ctx)`: P from the active WCS (G54 → 1 … G59 → 6), same as the CNCjs Axes widget |
+| Home (one axis) | `writeln(port, '$HX', ctx)`: FluidNC single-axis homing; direct write so it works from Alarm (the Feeder drops lines in Alarm) |
+
 **Why `$J=` through `command('gcode')`:**
 1. The Feeder path waits for `ok` before each line and is **alarm-gated** (S3).
 2. `$J=` leaves the G90/G91 and G20/G21 modal state unchanged.
@@ -290,13 +294,16 @@ The last condition stops repeated clicks from piling up moves. In every other st
 
 ## 10. Safety and machine commands (top bar, D4)
 
+Observed on FluidNC v4.0.1: feed hold (`!`) on an **idle** machine puts FluidNC into `Hold:0` (classic GRBL ignores it); cycle start (`~`) returns it to Idle. Kinetiq therefore shows Resume whenever the state is Hold or Door.
+
+
 | Control | Emit | Notes |
 |---|---|---|
 | Feed hold | If `workflow === 'running'`: `command(port, 'gcode:pause')`; otherwise `command(port, 'feedhold')` (`!`) | Pausing the workflow keeps the Sender consistent with the hold |
 | Cycle start / resume | If `workflow === 'paused'`: `command(port, 'gcode:resume')`; otherwise `command(port, 'cyclestart')` (`~`) | — |
-| Reset | `command(port, 'reset')` | Workflow → idle, Feeder cleared, `0x18`. A reset during motion causes ALARM (position lost); this is GRBL behaviour. **Not an emergency stop.** |
-| Unlock *(console in v1)* | `writeln(port, '$X')` (or `command(port, 'unlock')`) | — |
-| Home *(console in v1)* | `writeln(port, '$H')` (or `command(port, 'homing')`) | — |
+| Reset | `command(port, 'reset')` | Workflow → idle, Feeder cleared, `0x18`. A reset during motion causes ALARM (position lost); this is GRBL behaviour. **Not an emergency stop.** Observed on FluidNC v4.0.1: prints `Grbl 4.0 [FluidNC v4.0.1 (wifi) '$' for help]`; **an existing Alarm is not cleared** (homing enabled, `$22=1`). |
+| Unlock | `command(port, 'unlock')` → `$X` | Enabled only in Alarm with the workflow idle. Observed on FluidNC v4.0.1: replies `[MSG:INFO: Caution: Unlocked]`, state → Idle. |
+| Home | `command(port, 'homing')` → `$H` | Enabled in Idle or Alarm with the workflow idle. **Moves the machine.** Not yet exercised on hardware. |
 
 ---
 

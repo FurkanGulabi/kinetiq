@@ -41,12 +41,13 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 | Realtime client | **`socket.io-client@2.x`** | Protocol lock-step with the CNCjs Socket.IO 2.2 server (D3) |
 | Styling | **Tailwind CSS v4** with CSS-variable design tokens (`@theme`) | As required; tokens are defined once |
 | Primitives | **Radix UI**, only `@radix-ui/react-select` and `@radix-ui/react-dialog` | Accessible select and confirmation dialog without a full component library |
+| 3D view | **three.js** (plain, no React wrapper) | Live machine visualisation; imperative updates avoid React re-renders at 4 Hz |
 | Icons | `lucide-react` | Consistent stroke icons, tree-shaken |
 | State | React `useSyncExternalStore` over one small module store | Native; no state library |
 | Server runner | `tsx` (dev), `tsc` build of `server.ts` (prod) | Minimal |
 | Fonts | System stacks only (no web-font download) | Works offline on a shop PC; system fonts ship optical sizing |
 
-**Explicitly not used:** state libraries (Redux, Zustand), data-fetching libraries, ORMs or databases, a REST layer, i18n (English only for v1), animation libraries, charting libraries, and any testing tooling (out of scope by policy).
+**Explicitly not used:** state libraries (Redux, Zustand), data-fetching libraries, ORMs or databases, a REST layer, i18n (English only for v1), animation libraries, charting libraries, React three.js wrappers, and any testing tooling (out of scope by policy).
 
 ---
 
@@ -254,7 +255,7 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ KINETIQ │ ● Connected ▾ /dev/cu.usbserial-0001  115200 ▾ [Disconnect] FluidNC v3.7 │ ◉ IDLE │ [‖ Hold] [⟲ Reset] │ 48
+│ KINETIQ │ ● Connected /dev/tty.usbserial-110 115200 [Disconnect] FluidNC v4.0.1 │ ◉ IDLE │ [Home][Unlock] │ [‖ Hold][⟲ Reset] │ 48
 ├─────────────────────────────────────┬──────────────────────────────────────────────────────────┤
 │ POSITION                 G54 · mm   │ JOB                                        ● Running     │
 │            WORK        MACHINE      │ bracket-v2.nc                                            │
@@ -272,7 +273,7 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
 │                                     │ ┌─────────────────────────────────────────────┐ [Send]   │
 │ Jog disabled: job running           │ │ › Type a command…                           │          │
 └─────────────────────────────────────┴──────────────────────────────────────────────────────────┘
-   fixed 420 px                            flexible; Job auto-height, Console fills the rest
+   fixed 560 px                            flexible; Job auto-height, Console fills the rest
 ```
 
 **Why this arrangement:**
@@ -293,16 +294,22 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
 | Identification | When ready: `FluidNC v3.7.8` (from the banner) or `Grbl 1.1h`. Hover shows port, baud and the GRBL-compat version. |
 | Errors | Inline under the bar, persistent until the next attempt. "Could not open /dev/cu.usbserial-0001. Check that the cable is connected and no other program is using the port." or "Connection lost: the controller may still finish moves it already received." |
 
-### 10.3 Widget 2: Console
+### 10.3 Widget 2: Visualisation (replaces the Console, 2026-11-08)
+
+At the user's request the Console panel was replaced by a live 3D view of the machine position. The console remains a candidate for a later milestone (manual commands currently go through the top-bar and axis controls).
 
 | Element | Behaviour |
 |---|---|
-| Lines | Mono, one row per line: timestamp (`--ink-3`), direction glyph (`›` outgoing, blank incoming), text. Classes: **out** (`--ink`), **response** (`--ink-2`), **ok** (`--ink-3`, de-emphasised), **message** (`--ink-2`; `[MSG:WARN` → warn glyph, `[MSG:ERR` → crit glyph), **error** (crit ▲ + text), **alarm** (crit ◆ + text, row tinted at 8 % crit). |
-| Source | Feeder-originated lines (jogs) are marked with a small `jog`/`feeder` tag. Lines sent from other tabs are shown, because echo de-duplication is per tab. |
-| Auto-scroll | On by default. It pauses automatically when the user scrolls up, and a "Jump to latest ↓" pill appears. A toggle in the panel header shows the current mode. |
-| Clear | Clears the local buffer only (labelled "Clear view"). It does not affect the machine. |
-| Input | Single-line input + **Send** (Enter). **Disabled while a job is running or paused**, with the reason shown in the placeholder. Real-time control stays in the top bar. |
-| Performance | The ring buffer caps the DOM at 2,000 rows, and incoming lines are batched per animation frame. Add virtualisation only if profiling shows a need. |
+| Space | **Work coordinates in mm**, Z up as on the machine. Inch reports (`$13=1`) are converted to mm for the scene. |
+| Scene | Grid on the work Z=0 plane (10 mm minor, 50 mm major, 600 mm wide); work-origin axes labelled X/Y/Z and **W0**; machine-origin marker **M0** at −WCO. |
+| Tool | Accent cone whose tip is the live work position, a grey shank above it, a dashed drop line to Z=0 and a footprint ring on the grid for depth. |
+| Path | Trail of recent tool positions (points at least 0.02 mm apart, capped at 20,000; the oldest half is dropped when full). Clear-path button. |
+| Live updates | `VisualisationPanel` subscribes to the store imperatively (`subscribe`), so 4 Hz status updates never re-render React. The tool follows each status update with a short exponential smoothing (~90 ms) so motion reads continuously; **no smoothing under `prefers-reduced-motion`**. The readout panel remains the precise value. |
+| Camera | Orbit (drag), pan (right-drag), zoom (scroll); presets **Iso / Top / Front**; **Follow tool** toggle; **Fit** frames the work origin, tool and path. Renders on demand only. |
+| States | "No position — connect to a controller" until a status report arrives; a message instead of the canvas if WebGL is unavailable. |
+| Loading | `three` is code-split with `next/dynamic` (`ssr: false`), so it loads only in the browser for this panel. |
+
+Implementation: `src/components/visualisation/MachineScene.ts` (imperative three.js) and `VisualisationPanel.tsx` (panel, controls, store subscription). Not shown yet: the machine travel envelope (FluidNC reports `$130-132` max travel, but the direction of travel from machine zero is not known from `$$` alone) and G-code toolpaths (future, with the Job widget).
 
 ### 10.4 Widget 3: Position and Jog
 
@@ -310,10 +317,11 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
 |---|---|
 | Header | `POSITION`, plus active WCS (`G54`) and report units (`mm`/`in` from `$13`) on the right |
 | Readout | Three rows (X, Y, Z) and two columns. **Work** is large, primary ink. **Machine** is small, secondary ink, under a `MACHINE` column label. Fixed 3 decimals in mm and 4 in inches. Values are dimmed (`--ink-3`) with "—" until the first status report. |
+| Per-axis controls | Each X/Y/Z row (`AxisRow.tsx`) has: **Go to** — a work-coordinate target field + Go (Enter); sends an absolute jog `$J=G90 G21 X11 F<jog feed>` (feed-limited, soft-limit checked, cancellable with ■). While a target is typed, the panel status line shows the move in plain sight ("Move X to 11.000 mm (+10.000) at 1000 mm/min"). **Zero** — `G10 L20 P<active WCS> X0`, sets the current position as work zero (persisted by the firmware). **Home** — FluidNC single-axis homing `$HX` (direct write so it works from Alarm). Go to and Zero need Idle (Go to also Jog) and go through the Feeder; Home needs Idle or Alarm; all need an idle workflow. The Position column is 560 px wide to fit these. |
 | Jog pad | 3×3 XY cross (Y+ top, Y− bottom, X− left, X+ right), plus a separate Z column (Z+ top, Z− bottom), offset by one column to show it is a different plane. The **centre button ■ is Stop jog** (`jogCancel`, `0x85`). Buttons are 52 px, with the letter and sign large and the arrow glyph small. |
 | Step | Segmented control: `0.01 · 0.1 · 1 · 10 · 100` mm (inch mode: `0.001 · 0.01 · 0.1 · 1 · 4` in). |
-| Feed | Segmented control: `100 · 500 · 1000 · 3000` mm/min, plus a "Custom" numeric field validated to `0 < F ≤ 10000`. **[Hardware check]** Real limits come from FluidNC's per-axis max rate, and the firmware clamps them anyway. |
-| Gating | Enabled only when connected and ready, workflow idle, `activeState` Idle or Jog, and the Feeder is not pending. Otherwise all jog buttons are disabled and the reason appears under the pad ("Alarm: send $X in the console to unlock", "Job running", "Controller not ready"). |
+| Feed | Segmented control: `100 · 500 · 1000 · 3000` mm/min (inch mode `4 · 20 · 40 · 120`), plus a custom numeric field validated to `0 < F ≤ 10000` mm/min (400 in/min); an invalid entry is flagged and reverts on blur. Step and feed are remembered per unit system in `localStorage`. **[Hardware check]** Real limits come from FluidNC's per-axis max rate, and the firmware clamps them anyway. |
+| Gating | Enabled only when connected and ready, workflow idle, `activeState` Idle or Jog, and the Feeder is not pending. Otherwise all jog buttons are disabled and the reason appears under the controls ("Alarm — use Home or Unlock in the top bar first", "Jog is disabled while a job is running or paused", "Jog is not available while Hold"). Stop jog stays enabled whenever the controller is reporting, because status lags up to 250 ms and `0x85` is harmless when idle. |
 | Input mode | Pointer only in v1. Keyboard jogging is deliberately excluded (accidental-motion risk; not in scope). |
 
 ### 10.5 Widget 4: Job Status
@@ -326,11 +334,16 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
 | Stat row | `STARTED 14:02:11` · `ELAPSED 0:41:06` · `REMAINING ≈ 25 min` · `FINISHED 14:43:17 / —`. Each has a hover note on its source and accuracy (`API_REFERENCE.md` §7.3). Remaining shows "—" until it is available. |
 | Controls (D4) | **Start** (primary; when idle with a program loaded), **Pause** / **Resume**, **Stop** (danger; opens a confirmation dialog, then runs the safe stop sequence pause → Hold:0 → force stop, showing "Stopping…"). |
 
-### 10.6 Safety controls (top bar, D4)
+### 10.6 Machine controls (top bar, D4)
 
-- **Hold** (warn outline): feed hold, or job pause while running. It turns into **Resume** when held. No confirmation.
-- **Reset** (crit outline): soft reset. No confirmation, because hesitation is worse than a reset. Hover note: "Soft reset (Ctrl-X). Stops motion and clears buffers. Not an emergency stop."
-- Both are **always** visible while connected. Their positions never change.
+Order, at the far right of the top bar: **Home · Unlock │ Hold/Resume · Reset** (`src/components/safety/MachineControls.tsx`, gating in `derive.machineControlsView`).
+
+- **Home** (secondary): `$H`. Enabled in Idle or Alarm with the workflow idle. Moves the machine; no confirmation, because homing is a routine start-of-session action.
+- **Unlock** (secondary): `$X`. Enabled only in Alarm with the workflow idle. Hover note: machine position may be unknown.
+- **Hold** (warn outline): feed hold, or job pause while running. Always enabled while connected, because status lags up to 250 ms and `!` on an idle machine is harmless. Becomes **Resume** (primary) while the state is Hold/Door or the workflow is paused; disabled during `Hold:1` (decelerating) and `Door:1` (door open).
+- **Reset** (crit outline): soft reset. Always enabled while connected; no confirmation, because hesitation is worse than a reset. Hover note: "Not an emergency stop."
+- **Alarm hint:** while the state is Alarm, a strip under the top bar explains that motion is blocked until Home or Unlock, and that Reset alone does not clear it (observed on the controller).
+- All controls are hidden while disconnected; their positions never change while connected.
 
 ### 10.7 Empty, disconnected and edge states
 

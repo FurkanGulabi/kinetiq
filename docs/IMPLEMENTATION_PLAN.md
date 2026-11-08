@@ -42,7 +42,7 @@
 
 **Expected output:** `npm run dev` starts one process. The browser shows the Kinetiq top bar with a working Connection widget.
 
-**Progress (2026-11-08):** tasks 1–8 are implemented. Observed so far: one process serves the page, the session and `/socket.io`; the authenticated socket receives the port list; HMR coexists with Socket.IO (U1); the open-error payload is empty (U2); a bad baud value raises an uncaught exception (U8); the production build starts and shuts down cleanly. **Remaining:** task 9's FluidNC hardware observations (F1, F3, F4, F6, F15) and the hardware acceptance criteria below need the ESP32 connected.
+**Progress (2026-11-08):** tasks 1–8 are implemented. Observed so far: one process serves the page, the session and `/socket.io`; the authenticated socket receives the port list; HMR coexists with Socket.IO (U1); the open-error payload is empty (U2); a bad baud value raises an uncaught exception (U8); the production build starts and shuts down cleanly. **Hardware session (2026-11-08, FluidNC v4.0.1):** see `docs/hardware/2026-11-08-m1-fluidnc.md`. Connect, Disconnect (port released), re-attach after reload, Connected / ALARM state and FluidNC identification were observed. No reset on open; no banner; `$13=0`. **Still open:** unplug-while-connected ("Connection lost"), busy/missing-port error with a real device, and decision U9 (auto `$I`).
 
 **Acceptance criteria**
 - One `node` process serves the page and `/socket.io`. No second server or process exists.
@@ -76,6 +76,8 @@
 
 ## M3: Console
 
+> **Changed 2026-11-08:** at the user's request the Console panel was replaced by a live 3D Visualisation (see `ARCHITECTURE.md` §10.3). The console tasks below are deferred.
+
 | | |
 |---|---|
 | **Objective** | A real-time console on the verified `serialport:read` / `serialport:write` / `writeln` interfaces |
@@ -106,6 +108,8 @@
 **Tasks:** `PositionPanel` readout (work and machine, WCS, `$13` units); `JogPad` (XY cross, Z column, centre Stop-jog); `JogSettings` (step, feed, custom feed validation); `commands.jogLine()` producing `$J=G91 G21|G20 <axis><±step> F<feed>`; `derive.canJog` with stated reasons; persistence of step and feed in `localStorage`; record the F9 and F10 hardware observations.
 
 **Expected output:** a working Coordinates and Jog widget.
+
+**Progress (2026-11-08):** implemented in `src/components/position/PositionPanel.tsx` (gating in `derive.jogView`, line builder in `commands.jogLine`), together with the M2 workspace grid and the `Panel`, `SegmentedControl` and `Readout` primitives; Job and Console are empty panels for now. **Observed on the controller (FluidNC v4.0.1), without motion:** readouts match the status reports (work Z −22.603 = MPos 0 − WCO 22.603), units `mm` from `$13=0`, WCS `G54`; jog buttons disable with a stated reason in Alarm and in `Hold:0`; the custom feed rejects out-of-range values. **Not yet exercised:** an actual jog move and Stop-jog (`0x85`) on FluidNC — this needs the operator, the work area clear and the E-stop within reach.
 
 **Acceptance criteria**
 - Readouts match the `?` status line in the console. Work and machine values differ by exactly the active offset.

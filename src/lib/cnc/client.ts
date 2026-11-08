@@ -10,7 +10,7 @@ import { DEFAULT_BAUDRATE, type OpenOptions, type ServerEvents } from './protoco
 import { getState, resetMachineState, setState } from './store';
 
 const SESSION_URL = '/api/kinetiq/session';
-const FIRMWARE_PATTERN = /\[(FluidNC v[\d.]+[^\s\]]*)/;
+const FIRMWARE_PATTERN = /FluidNC v(\d+(?:\.\d+)+[\w.-]*?)(?=[\s:\]]|$)/;
 const PREFS_KEY = 'kinetiq.connection';
 
 let socket: Socket | null = null;
@@ -165,7 +165,7 @@ export async function startClient(): Promise<void> {
   on('serialport:read', (line) => {
     const match = typeof line === 'string' ? FIRMWARE_PATTERN.exec(line) : null;
     if (match) {
-      setState((s) => ({ ...s, controller: { ...s.controller, firmware: match[1] } }));
+      setState((s) => ({ ...s, controller: { ...s.controller, firmware: `FluidNC v${match[1]}` } }));
     }
   });
 
@@ -244,6 +244,54 @@ export function closePort(): void {
       }));
     }
   });
+}
+
+/**
+ * Machine commands handled by CNCjs GrblController.command() (docs/API_REFERENCE.md §7.1, §10).
+ * Only these are exposed; Kinetiq never writes raw bytes for machine control.
+ */
+export type MachineCommand =
+  | 'homing' // $H
+  | 'unlock' // $X
+  | 'feedhold' // !
+  | 'cyclestart' // ~
+  | 'reset' // workflow stop + feeder reset + 0x18
+  | 'gcode:pause' // workflow pause + !
+  | 'gcode:resume' // ~ + workflow resume
+  | 'jogCancel'; // 0x85 real-time jog cancel
+
+export function sendCommand(cmd: MachineCommand): void {
+  const { port, phase } = getState().connection;
+  if (!socket || !port || phase !== 'open') {
+    return;
+  }
+  socket.emit('command', port, cmd);
+}
+
+/**
+ * Queue one G-code line through the CNCjs Feeder (`command('gcode')`): one line in flight,
+ * released on ok/error, and dropped by the backend while in Alarm (CNCJS_ANALYSIS.md S3).
+ * Used for jogging (`$J=`). Callers must check derive.jogView() first.
+ */
+export function sendGcode(line: string): void {
+  const { port, phase } = getState().connection;
+  if (!socket || !port || phase !== 'open' || !line.trim()) {
+    return;
+  }
+  socket.emit('command', port, 'gcode', line, { __sender__: clientId });
+}
+
+/**
+ * Write one line directly (CNCjs `writeln`), bypassing the Feeder — same path as the console.
+ * Needed for `$H<axis>`: homing must work from Alarm, where the Feeder drops lines.
+ * Callers must check the workflow is idle (CNCJS_ANALYSIS.md hazard H1).
+ */
+export function sendLine(line: string): void {
+  const { port, phase } = getState().connection;
+  if (!socket || !port || phase !== 'open' || !line.trim()) {
+    return;
+  }
+  socket.emit('writeln', port, line, { __sender__: clientId });
 }
 
 export function clearConnectionError(): void {

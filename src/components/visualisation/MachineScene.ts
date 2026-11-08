@@ -5,11 +5,13 @@
  *   - grid on the work Z=0 plane, work origin axes (W0), machine origin marker (M0 = −WCO)
  *   - tool: cone whose tip sits at the live work position, with a drop line to Z=0
  *   - path: trail of recent tool positions
+ *   - program: the loaded G-code toolpath (feeds / rapids), split into done / remaining by line index
  * Renders on demand only (camera change, position change, smoothing in progress).
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import type { Toolpath } from '@/lib/gcode/toolpath';
 
 export type ViewPreset = 'iso' | 'top' | 'front';
 
@@ -27,6 +29,44 @@ const COLORS = {
   accent: 0x5ab8ff,
   accentDim: 0x2f6a94,
 };
+
+/** Toolpath colours (rgb + alpha): remaining feeds carry the accent; executed work recedes. */
+const PROGRAM_COLORS = {
+  feed: [0x5a / 255, 0xb8 / 255, 0xff / 255, 0.95],
+  feedDone: [0x2f / 255, 0x6a / 255, 0x94 / 255, 0.9],
+  rapid: [0xa1 / 255, 0xa7 / 255, 0xaf / 255, 0.4],
+  rapidDone: [0xa1 / 255, 0xa7 / 255, 0xaf / 255, 0.14],
+} as const;
+
+const PROGRAM_VERTEX = /* glsl */ `
+  attribute float aLine;
+  attribute float aKind;
+  uniform float uDone;
+  varying float vDone;
+  varying float vKind;
+  void main() {
+    vDone = aLine < uDone ? 1.0 : 0.0;
+    vKind = aKind;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const PROGRAM_FRAGMENT = /* glsl */ `
+  uniform vec4 uFeed;
+  uniform vec4 uFeedDone;
+  uniform vec4 uRapid;
+  uniform vec4 uRapidDone;
+  uniform float uShowRapids;
+  varying float vDone;
+  varying float vKind;
+  void main() {
+    vec4 feed = mix(uFeed, uFeedDone, step(0.5, vDone));
+    vec4 rapid = mix(uRapid, uRapidDone, step(0.5, vDone));
+    vec4 color = mix(rapid, feed, step(0.5, vKind));
+    if (vKind < 0.5 && uShowRapids < 0.5) discard;
+    gl_FragColor = color;
+  }
+`;
 
 const GRID_SIZE = 600; // mm, centred on the work origin
 const GRID_MINOR = 10;
@@ -100,6 +140,17 @@ export class MachineScene {
   private trailCount = 0;
   private lastTrailPoint: THREE.Vector3 | null = null;
 
+  private program: THREE.LineSegments | null = null;
+  private programBounds: THREE.Box3 | null = null;
+  private programUniforms = {
+    uDone: { value: -1 },
+    uShowRapids: { value: 1 },
+    uFeed: { value: new THREE.Vector4(...PROGRAM_COLORS.feed) },
+    uFeedDone: { value: new THREE.Vector4(...PROGRAM_COLORS.feedDone) },
+    uRapid: { value: new THREE.Vector4(...PROGRAM_COLORS.rapid) },
+    uRapidDone: { value: new THREE.Vector4(...PROGRAM_COLORS.rapidDone) },
+  };
+
   private target: THREE.Vector3 | null = null;
   private displayed: THREE.Vector3 | null = null;
   private follow = false;
@@ -107,6 +158,7 @@ export class MachineScene {
   private frame = 0;
   private lastFrameTime = 0;
   private disposed = false;
+  private programVisible = true;
 
   constructor(private container: HTMLElement) {
     const { clientWidth: w, clientHeight: h } = container;
@@ -237,6 +289,65 @@ export class MachineScene {
     this.requestRender();
   }
 
+  /** Show a parsed program (work coordinates, mm); null removes it. Frames the program when shown. */
+  setToolpath(toolpath: Toolpath | null): void {
+    if (this.program) {
+      this.scene.remove(this.program);
+      this.program.geometry.dispose();
+      (this.program.material as THREE.Material).dispose();
+      this.program = null;
+      this.programBounds = null;
+    }
+    if (toolpath && toolpath.segmentCount > 0) {
+      const n = toolpath.segmentCount;
+      const lineAttr = new Float32Array(n * 2);
+      const kindAttr = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) {
+        lineAttr[i * 2] = lineAttr[i * 2 + 1] = toolpath.lines[i];
+        kindAttr[i * 2] = kindAttr[i * 2 + 1] = toolpath.kinds[i];
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(toolpath.positions, 3));
+      geometry.setAttribute('aLine', new THREE.BufferAttribute(lineAttr, 1));
+      geometry.setAttribute('aKind', new THREE.BufferAttribute(kindAttr, 1));
+      geometry.computeBoundingSphere();
+      const material = new THREE.ShaderMaterial({
+        vertexShader: PROGRAM_VERTEX,
+        fragmentShader: PROGRAM_FRAGMENT,
+        uniforms: this.programUniforms,
+        transparent: true,
+        depthWrite: false,
+      });
+      this.program = new THREE.LineSegments(geometry, material);
+      this.program.renderOrder = 1;
+      this.program.visible = this.programVisible;
+      this.scene.add(this.program);
+      const b = toolpath.bounds;
+      if (b) this.programBounds = new THREE.Box3(new THREE.Vector3(...b.min), new THREE.Vector3(...b.max));
+      this.fit();
+    }
+    this.requestRender();
+  }
+
+  /** Lines acknowledged so far (`sender.received`); null while no job runs (whole program shown as remaining). */
+  setProgramProgress(done: number | null): void {
+    const value = done ?? -1;
+    if (this.programUniforms.uDone.value === value) return;
+    this.programUniforms.uDone.value = value;
+    this.requestRender();
+  }
+
+  setProgramVisible(visible: boolean): void {
+    if (this.program) this.program.visible = visible;
+    this.programVisible = visible;
+    this.requestRender();
+  }
+
+  setShowRapids(show: boolean): void {
+    this.programUniforms.uShowRapids.value = show ? 1 : 0;
+    this.requestRender();
+  }
+
   setView(preset: ViewPreset): void {
     const focus = this.controls.target.clone();
     const distance = Math.max(this.camera.position.distanceTo(focus), 400);
@@ -252,17 +363,18 @@ export class MachineScene {
     this.requestRender();
   }
 
-  /** Frame the work origin, the tool and the recorded path. */
+  /** Frame the work origin, the tool, the recorded path and the loaded program. */
   fit(): void {
     const box = new THREE.Box3().setFromPoints([new THREE.Vector3(0, 0, 0)]);
     if (this.displayed) box.expandByPoint(this.displayed);
+    if (this.programBounds && this.programVisible) box.union(this.programBounds);
     for (let i = 0; i < this.trailCount; i++) {
       box.expandByPoint(
         new THREE.Vector3(this.trailPositions[i * 3], this.trailPositions[i * 3 + 1], this.trailPositions[i * 3 + 2]),
       );
     }
     const center = box.getCenter(new THREE.Vector3());
-    const size = Math.max(box.getSize(new THREE.Vector3()).length(), 160);
+    const size = Math.max(box.getSize(new THREE.Vector3()).length(), 60);
     const distance = size / (2 * Math.tan((this.camera.fov * Math.PI) / 360)) * 1.1;
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
     this.controls.target.copy(center);

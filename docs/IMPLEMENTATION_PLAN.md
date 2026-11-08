@@ -147,9 +147,11 @@
 
 ---
 
-## M5b: Toolpath in the Visualisation (next)
+## M5b: Toolpath in the Visualisation
 
 Draw the loaded program (`store.program.gcode`) in the 3D view: rapids and feeds in distinct styles, the executed portion highlighted from `sender.received`, bounds shown and used by Fit.
+
+**Progress (2026-11-08):** implemented (`ARCHITECTURE.md` §10.3). Checked against every file in `CNCJS-fork/examples/gcode`: line numbering equals the Sender's `total` for all of them; arcs in XY/XZ/YZ, full circles without XYZ, R-form helices in inches (`helical-thread-milling`), 2D laser jobs, and the 188k-line `github.gcode` (279 × 279 × 8.2 mm) render correctly. **Not yet observed:** the done/remaining split during a real run (needs a motion job).
 
 ---
 

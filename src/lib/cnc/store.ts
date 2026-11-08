@@ -55,6 +55,8 @@ export interface MachineState {
    * (Sender.hold returns early), so a short program with a bad line would otherwise end "Completed".
    */
   jobErrors: JobErrors | null;
+  /** Client-side: a machine settings (FluidNC config) operation is talking to the controller. */
+  configBusy: boolean;
 }
 
 export interface JobErrors {
@@ -94,6 +96,7 @@ const initialState: MachineState = {
   program: null,
   stopSequence: { phase: 'idle' },
   jobErrors: null,
+  configBusy: false,
 };
 
 let state: MachineState = initialState;

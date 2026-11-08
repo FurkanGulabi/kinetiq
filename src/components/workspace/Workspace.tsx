@@ -12,6 +12,7 @@ import { connectionErrorMessage, machineStateView } from '@/lib/cnc/derive';
 import { useMachine } from '@/lib/cnc/store';
 import { ConnectionBar } from '@/components/connection/ConnectionBar';
 import { MachineControls } from '@/components/safety/MachineControls';
+import { SettingsPanel } from '@/components/settings/SettingsPanel';
 import { PositionPanel } from '@/components/position/PositionPanel';
 import { JobPanel } from '@/components/job/JobPanel';
 
@@ -66,6 +67,7 @@ export function Workspace() {
             className="tracking-[0.06em]"
           />
         ) : null}
+        <SettingsPanel />
         <MachineControls />
       </header>
 

@@ -18,9 +18,8 @@ import fs from 'node:fs/promises';
 import type http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import jwt from 'jsonwebtoken';
 import type { CNCSettings } from './backend';
-import { isLoopbackHost } from './session';
+import { isAuthorized } from './session';
 
 export const JOBS_PATH = '/api/kinetiq/jobs';
 
@@ -126,20 +125,6 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<Buffer> {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
-}
-
-function authorized(req: http.IncomingMessage, settings: CNCSettings): boolean {
-  if (!isLoopbackHost(req.headers.host)) {
-    return false;
-  }
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-  try {
-    jwt.verify(token, settings.secret);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function upload(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
@@ -253,7 +238,7 @@ async function readGcode(res: http.ServerResponse, id: string): Promise<void> {
 }
 
 export async function handleJobs(req: http.IncomingMessage, res: http.ServerResponse, settings: CNCSettings): Promise<void> {
-  if (!authorized(req, settings)) {
+  if (!isAuthorized(req, settings)) {
     return fail(res, 403, 'forbidden');
   }
   const url = new URL(req.url || '/', 'http://localhost');

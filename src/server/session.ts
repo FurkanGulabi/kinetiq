@@ -46,3 +46,18 @@ export function handleSession(req: http.IncomingMessage, res: http.ServerRespons
   });
   res.end(JSON.stringify({ token }));
 }
+
+/** Loopback Host plus a valid session token (`Authorization: Bearer <token>`), for Kinetiq's HTTP APIs. */
+export function isAuthorized(req: http.IncomingMessage, settings: CNCSettings): boolean {
+  if (!isLoopbackHost(req.headers.host)) {
+    return false;
+  }
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  try {
+    jwt.verify(token, settings.secret);
+    return true;
+  } catch {
+    return false;
+  }
+}

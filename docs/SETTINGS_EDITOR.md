@@ -1,6 +1,6 @@
 # Machine Settings Editor (FluidNC config) — Design
 
-**Status:** proposal, 2026-11-08. Nothing built yet.
+**Status:** approved 2026-11-08 with the recommended options in §8. **S1 (read) built** 2026-11-08; S2–S4 not started.
 **Based on:** the hardware capture in `hardware/2026-11-08-fluidnc-config-read.md` and the FluidNC docs (commands and settings, config overview, XModem).
 **Target:** FluidNC v4.0.1 over USB serial (the connection Kinetiq already holds). Wi-Fi/HTTP upload is not used.
 
@@ -58,7 +58,7 @@ These are request/response operations that take 0.2–10 s and return one result
 ### 3.2 Server: `src/server/fluidnc/`
 | File | Responsibility |
 |---|---|
-| `session.ts` | **One exchange at a time.** Takes the open controller from the backend store and sends one command with `controller.writeln()`. It collects reply lines from `controller.connection`'s `data` event until `ok`/`error:N`, with a timeout. A lock rejects a second request with 409 "busy". |
+| `exchange.ts` | **One exchange at a time.** Takes the open controller from the backend store and sends one command with `controller.writeln()`. It collects reply lines from `controller.connection`'s `data` event until `ok`/`error:N`, with a timeout. A lock rejects a second request with 409 "busy". |
 | `xmodem.ts` | XModem-1K sender with CRC16, written from FluidNC's reference TypeScript implementation (`breiler/fluid-installer`, `src/utils/xmodem/xmodem.ts`). |
 | `machineConfig.ts` | The HTTP endpoints (§3.4), backups, read-back verification. |
 
@@ -175,7 +175,7 @@ Each stage can be used on its own and is checked on the machine. Nothing in S1�
 
 | Stage | Delivers | Machine check |
 |---|---|---|
-| **S1 Read** | `session.ts`, `GET` endpoint, dialog with YAML view (read-only), boot warnings, running-vs-saved hints, the settings-parser cleanup | Read-only commands (already proven) |
+| **S1 Read** ✓ | `fluidnc/exchange.ts`, `GET` endpoint (`fluidnc/machineConfig.ts`), panel with saved/running YAML views (read-only), boot warnings, running-vs-saved differences, the settings-parser cleanup | Done 2026-11-08: read through the UI, busy gating and settings cleanup checked on the machine |
 | **S2 Edit** | `yaml` document model, form view, schema, validation, diff. No writing yet | None (browser only) |
 | **S3 Save** | Backups, exclusive mode, XModem upload, read-back, restart + boot log, restore | Upload the **unchanged** file first (byte-identical), then a harmless edit (`name:`), then a restart with you present |
 | **S4 Live tuning** | `$/path=value` apply and read-back, "live, not saved" state | Change acceleration live, read back, discard by restart |

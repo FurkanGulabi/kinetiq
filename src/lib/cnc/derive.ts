@@ -84,6 +84,23 @@ export interface ControlState {
   reason?: string;
 }
 
+const CONFIG_BUSY = 'Settings operation in progress';
+
+/**
+ * Machine settings editor (docs/SETTINGS_EDITOR.md §4.5, §6): reading the FluidNC config needs a
+ * connected controller in Idle or Alarm with no job running, and one operation at a time.
+ */
+export function settingsView(s: MachineState): ControlState {
+  if (s.connection.phase !== 'open') return { enabled: false, reason: 'Connect to the controller first' };
+  const active = s.controller.state?.status.activeState ?? '';
+  if (!active) return { enabled: false, reason: 'Waiting for controller status' };
+  if (s.workflow !== 'idle') return { enabled: false, reason: 'Not available while a job is running or paused' };
+  if (active !== 'Idle' && active !== 'Alarm') return { enabled: false, reason: `Machine is ${active}: wait until it is Idle` };
+  if (s.feeder?.pending) return { enabled: false, reason: 'Waiting for the previous command to be accepted' };
+  if (s.configBusy) return { enabled: false, reason: CONFIG_BUSY };
+  return { enabled: true };
+}
+
 export interface MachineControlsView {
   visible: boolean;
   home: ControlState;
@@ -120,7 +137,9 @@ export function machineControlsView(s: MachineState): MachineControlsView {
     ? off(notReady)
     : !workflowIdle
       ? off(jobActive)
-      : active === 'Idle' || active === 'Alarm'
+      : s.configBusy
+        ? off(CONFIG_BUSY)
+        : active === 'Idle' || active === 'Alarm'
         ? on
         : off(`Not available while ${active}`);
 
@@ -128,7 +147,9 @@ export function machineControlsView(s: MachineState): MachineControlsView {
     ? off(notReady)
     : !workflowIdle
       ? off(jobActive)
-      : active === 'Alarm'
+      : s.configBusy
+        ? off(CONFIG_BUSY)
+        : active === 'Alarm'
         ? on
         : off('Only needed in Alarm');
 
@@ -201,6 +222,9 @@ export function jogView(s: MachineState): { canJog: boolean; canCancel: boolean;
   if (s.feeder?.pending) {
     return { canJog: false, canCancel, reason: 'Waiting for the previous command to be accepted' };
   }
+  if (s.configBusy) {
+    return { canJog: false, canCancel, reason: CONFIG_BUSY };
+  }
   return { canJog: true, canCancel, reason: null };
 }
 
@@ -228,6 +252,10 @@ export function axisControlsView(s: MachineState): AxisControlsView {
   }
   if (s.workflow !== 'idle') {
     const r = off('Not available while a job is running or paused');
+    return { home: r, zero: r, goTo: r };
+  }
+  if (s.configBusy) {
+    const r = off(CONFIG_BUSY);
     return { home: r, zero: r, goTo: r };
   }
   const alarm = 'Alarm — use Home or Unlock first';
@@ -375,7 +403,15 @@ export function jobView(s: MachineState, now: number): JobView {
   const notReady = open ? 'Waiting for controller status' : 'Connect to a controller first';
   const jobBusy = 'Stop the current job first';
 
-  const canLoad = !ready ? off(notReady) : s.workflow !== 'idle' ? off(jobBusy) : stopping ? off('Stopping…') : on;
+  const canLoad = !ready
+    ? off(notReady)
+    : s.workflow !== 'idle'
+      ? off(jobBusy)
+      : stopping
+        ? off('Stopping…')
+        : s.configBusy
+          ? off(CONFIG_BUSY)
+          : on;
   const canUnload = !s.program ? off('No program loaded') : !ready ? off(notReady) : s.workflow !== 'idle' ? off(jobBusy) : on;
 
   let start: ControlState;
@@ -385,6 +421,7 @@ export function jobView(s: MachineState, now: number): JobView {
   else if (active === 'Alarm') start = off('Alarm — use Home or Unlock in the top bar first');
   else if (active !== 'Idle') start = off(`Cannot start while ${active}`);
   else if (s.feeder?.pending) start = off('Waiting for the previous command to be accepted');
+  else if (s.configBusy) start = off(CONFIG_BUSY);
   else start = on;
 
   const pauseMode: 'pause' | 'resume' = s.workflow === 'paused' ? 'resume' : 'pause';

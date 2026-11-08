@@ -4,6 +4,7 @@
  *   http.Server (127.0.0.1:8000)
  *    ├── GET /api/kinetiq/session → JWT for the Socket.IO handshake
  *    ├── /api/kinetiq/jobs/*     → job library (uploaded G-code + recent runs)
+ *    ├── /api/kinetiq/machine-config → FluidNC config read (settings editor)
  *    ├── /socket.io/*            → CNCEngine (src/server/cnc, Socket.IO 2.2)
  *    └── everything else         → Next.js
  *
@@ -26,6 +27,7 @@ async function main() {
   const { loadBackend, closeAllControllers } = await import('./src/server/backend');
   const { handleSession, SESSION_PATH } = await import('./src/server/session');
   const { handleJobs, JOBS_PATH } = await import('./src/server/jobs');
+  const { handleMachineConfig, MACHINE_CONFIG_PATH } = await import('./src/server/fluidnc/machineConfig');
   const next = (await import('next')).default;
 
   const { settings, engine, store } = loadBackend();
@@ -42,6 +44,10 @@ async function main() {
     }
     if (url.pathname === JOBS_PATH || url.pathname?.startsWith(`${JOBS_PATH}/`)) {
       void handleJobs(req, res, settings);
+      return;
+    }
+    if (url.pathname === MACHINE_CONFIG_PATH || url.pathname?.startsWith(`${MACHINE_CONFIG_PATH}/`)) {
+      void handleMachineConfig(req, res, settings, store);
       return;
     }
     // Socket.IO requests never reach this handler: Engine.IO (attached by CNCEngine) wraps the

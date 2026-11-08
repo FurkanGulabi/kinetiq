@@ -7,7 +7,7 @@
  */
 import io, { type Socket } from 'socket.io-client';
 import { DEFAULT_BAUDRATE, type OpenOptions, type ServerEvents } from './protocol';
-import { getState, resetMachineState, setState, subscribe } from './store';
+import { getState, resetMachineState, setState, subscribe, type ProgramLeveling } from './store';
 
 const SESSION_URL = '/api/kinetiq/session';
 const FIRMWARE_PATTERN = /FluidNC v(\d+(?:\.\d+)+[\w.-]*?)(?=[\s:\]]|$)/;
@@ -219,10 +219,16 @@ export async function startClient(): Promise<void> {
   on('sender:status', (sender) => setState((s) => ({ ...s, sender })));
   on('feeder:status', (feeder) => setState((s) => ({ ...s, feeder })));
   on('gcode:load', (name, gcode, context) => {
-    const jobId = (context as { kinetiqJobId?: unknown } | null)?.kinetiqJobId;
+    const ctx = context as { kinetiqJobId?: unknown; kinetiqLeveling?: ProgramLeveling } | null;
+    const jobId = ctx?.kinetiqJobId;
+    const lv = ctx?.kinetiqLeveling;
+    const leveling =
+      lv && typeof lv.mapId === 'string' && typeof lv.wcs === 'string' && lv.wco && [lv.wco.x, lv.wco.y, lv.wco.z].every(Number.isFinite)
+        ? lv
+        : null;
     setState((s) => ({
       ...s,
-      program: { name, gcode: typeof gcode === 'string' ? gcode : '', jobId: typeof jobId === 'string' ? jobId : null },
+      program: { name, gcode: typeof gcode === 'string' ? gcode : '', jobId: typeof jobId === 'string' ? jobId : null, leveling },
     }));
   });
   on('gcode:unload', () => setState((s) => ({ ...s, program: null })));
@@ -374,12 +380,12 @@ export function clearConnectionError(): void {
  * Load a program onto the controller (CNCjs `gcode:load`). The backend appends `%wait`, stops the
  * workflow and replies with `gcode:load` to every attached socket. Callers check derive.jobView().canLoad.
  */
-export function loadProgram(name: string, gcode: string, jobId: string | null): Promise<void> {
+export function loadProgram(name: string, gcode: string, jobId: string | null, leveling: ProgramLeveling | null = null): Promise<void> {
   const { port, phase } = getState().connection;
   if (!socket || !port || phase !== 'open') {
     return Promise.reject(new Error('Not connected'));
   }
-  const context = jobId ? { kinetiqJobId: jobId } : {};
+  const context = { ...(jobId ? { kinetiqJobId: jobId } : {}), ...(leveling ? { kinetiqLeveling: leveling } : {}) };
   return new Promise((resolve, reject) => {
     socket?.emit('command', port, 'gcode:load', name, gcode, context, (err: unknown) => {
       if (err) {

@@ -13,6 +13,7 @@ import { useMachine } from '@/lib/cnc/store';
 import { ConnectionBar } from '@/components/connection/ConnectionBar';
 import { MachineControls } from '@/components/safety/MachineControls';
 import { SettingsPanel } from '@/components/settings/SettingsPanel';
+import { LevelingPanel } from '@/components/leveling/LevelingPanel';
 import { PositionPanel } from '@/components/position/PositionPanel';
 import { JobPanel } from '@/components/job/JobPanel';
 
@@ -67,6 +68,7 @@ export function Workspace() {
             className="tracking-[0.06em]"
           />
         ) : null}
+        <LevelingPanel />
         <SettingsPanel />
         <MachineControls />
       </header>

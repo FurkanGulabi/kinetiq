@@ -91,6 +91,7 @@ export interface ControlState {
 export function busyReason(s: MachineState): string | null {
   if (s.configBusy) return 'Settings operation in progress';
   if (s.probe.phase === 'running') return 'Probing in progress';
+  if (s.leveling.phase === 'running') return 'Height-map probing in progress';
   return null;
 }
 
@@ -431,6 +432,7 @@ export function jobView(s: MachineState, now: number): JobView {
   else if (active !== 'Idle') start = off(`Cannot start while ${active}`);
   else if (s.feeder?.pending) start = off('Waiting for the previous command to be accepted');
   else if (busyReason(s)) start = off(busyReason(s)!);
+  else if (s.program.leveling && levelingDrift(s, s.program.leveling)) start = off(levelingDrift(s, s.program.leveling)!);
   else start = on;
 
   const pauseMode: 'pause' | 'resume' = s.workflow === 'paused' ? 'resume' : 'pause';
@@ -536,14 +538,58 @@ export function probeView(s: MachineState): ProbeView {
   const active = status?.activeState ?? '';
   if (!active) return { touching: null, canProbe: off('Waiting for controller status'), canCancel: running };
   const touching = !!status?.pinState && status.pinState.includes('P');
-  let canProbe: ControlState;
-  if (running) canProbe = off('Probing in progress');
-  else if (s.workflow !== 'idle') canProbe = off('Not available while a job is running or paused');
-  else if (active === 'Alarm') canProbe = off('Alarm — use Home or Unlock in the top bar first');
-  else if (active !== 'Idle') canProbe = off(`Not available while ${active}`);
-  else if (s.feeder?.pending) canProbe = off('Waiting for the previous command to be accepted');
-  else if (busyReason(s)) canProbe = off(busyReason(s)!);
-  else if (touching) canProbe = off('The probe reads as touching. Check the clip and plate before probing.');
-  else canProbe = { enabled: true };
+  const canProbe: ControlState = running ? off('Probing in progress') : probingGate(s, active, touching);
   return { touching, canProbe, canCancel: running };
+}
+
+/** Shared start conditions for probing sequences (Z probe, height map). */
+function probingGate(s: MachineState, active: string, touching: boolean): ControlState {
+  const off = (reason: string): ControlState => ({ enabled: false, reason });
+  if (s.workflow !== 'idle') return off('Not available while a job is running or paused');
+  if (active === 'Alarm') return off('Alarm — use Home or Unlock in the top bar first');
+  if (active !== 'Idle') return off(`Not available while ${active}`);
+  if (s.feeder?.pending) return off('Waiting for the previous command to be accepted');
+  if (busyReason(s)) return off(busyReason(s)!);
+  if (touching) return off('The probe reads as touching. Check the clip before probing.');
+  return { enabled: true };
+}
+
+export interface LevelingView {
+  touching: boolean | null;
+  canProbe: ControlState;
+  canCancel: boolean;
+}
+
+/** Height-map probing: same start conditions as the Z probe. */
+export function levelingView(s: MachineState): LevelingView {
+  const running = s.leveling.phase === 'running';
+  if (s.connection.phase !== 'open') return { touching: null, canProbe: { enabled: false, reason: 'Connect to a controller first' }, canCancel: false };
+  const status = s.controller.state?.status;
+  const active = status?.activeState ?? '';
+  if (!active) return { touching: null, canProbe: { enabled: false, reason: 'Waiting for controller status' }, canCancel: running };
+  const touching = !!status?.pinState && status.pinState.includes('P');
+  const canProbe: ControlState = running ? { enabled: false, reason: 'Height-map probing in progress' } : probingGate(s, active, touching);
+  return { touching, canProbe, canCancel: running };
+}
+
+/** Work offset (machine − work) from the status report, or null. */
+export function workOffset(s: MachineState): { x: number; y: number; z: number } | null {
+  const status = s.controller.state?.status;
+  if (!status) return null;
+  const off = (a: 'x' | 'y' | 'z') => Number(status.mpos?.[a]) - Number(status.wpos?.[a]);
+  const wco = { x: off('x'), y: off('y'), z: off('z') };
+  return [wco.x, wco.y, wco.z].every(Number.isFinite) ? wco : null;
+}
+
+/**
+ * Why a leveled program must not start: the work zero or coordinate system changed since its
+ * height map was probed, so the map no longer lines up with the stock. null when it still matches.
+ */
+export function levelingDrift(s: MachineState, leveling: { wcs: string; wco: { x: number; y: number; z: number } }): string | null {
+  const wcs = s.controller.state?.parserstate?.modal?.wcs || 'G54';
+  if (wcs !== leveling.wcs) return `Leveled for ${leveling.wcs}, but ${wcs} is active`;
+  const wco = workOffset(s);
+  if (!wco) return 'Waiting for the work position';
+  const moved = (['x', 'y', 'z'] as const).filter((a) => Math.abs(wco[a] - leveling.wco[a]) > 0.005);
+  return moved.length ? `Work ${moved.map((a) => a.toUpperCase()).join('/')} zero changed since leveling: probe the height map again` : null;
 }

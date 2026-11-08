@@ -2,6 +2,7 @@
 
 /**
  * Z probe with a touch plate: find the stock surface and set work Z0 there.
+ * The step-by-step sending and stop rules live in lineSequence.ts.
  *
  *   1. G21 G91                     millimetres, relative moves
  *   2. G38.2 Z-<maxTravel> F<fast> probe down until the plate is touched (must report contact)
@@ -17,8 +18,9 @@
  * all lines at once would be unsafe: the Feeder keeps sending after an `error:`, so a refused probe
  * move (for example "homing required") would still run the G10 and set Z0 at the wrong height.
  */
-import { onSerialLine, sendCommand, sendGcode } from './client';
+import { sendCommand, sendGcode } from './client';
 import { WCS_P } from './commands';
+import { moveTimeout, restoreModalLine, SequenceError, sendStep, type SequenceStep } from './lineSequence';
 import { getState, setState } from './store';
 
 export interface ProbeSettings {
@@ -95,85 +97,20 @@ export function probeTouching(pinState: string | undefined): boolean {
 
 const n = (v: number) => Number(v.toFixed(3)).toString();
 
-interface Step {
-  line: string;
-  label: string;
-  /** G38.2: must be followed by [PRB:…:1] before its ok. */
-  probe?: boolean;
-  timeoutMs: number;
-}
-
-function buildSteps(s: ProbeSettings, wcs: string, distance: string, units: string): Step[] {
-  const travelTime = (mm: number, feed: number) => Math.ceil((mm / feed) * 60000 * 1.5) + 5000;
-  const restore = `${distance === 'G91' ? 'G91' : 'G90'}${units === 'G20' ? ' G20' : ''}`;
+function buildSteps(s: ProbeSettings, wcs: string, distance: string, units: string): SequenceStep[] {
   return [
     { line: 'G21 G91', label: 'Preparing', timeoutMs: 5000 },
-    { line: `G38.2 Z-${n(s.maxTravel)} F${n(s.fastFeed)}`, label: 'Probing down (fast)', probe: true, timeoutMs: travelTime(s.maxTravel, s.fastFeed) },
+    { line: `G38.2 Z-${n(s.maxTravel)} F${n(s.fastFeed)}`, label: 'Probing down (fast)', probe: true, timeoutMs: moveTimeout(s.maxTravel, s.fastFeed) },
     { line: `G0 Z${n(s.backoff)}`, label: 'Backing off', timeoutMs: 10000 },
-    { line: `G38.2 Z-${n(s.backoff + 1)} F${n(s.slowFeed)}`, label: 'Probing again (slow)', probe: true, timeoutMs: travelTime(s.backoff + 1, s.slowFeed) },
+    { line: `G38.2 Z-${n(s.backoff + 1)} F${n(s.slowFeed)}`, label: 'Probing again (slow)', probe: true, timeoutMs: moveTimeout(s.backoff + 1, s.slowFeed) },
     { line: 'G90', label: 'Setting work Z', timeoutMs: 5000 },
     { line: `G10 L20 P${WCS_P[wcs] ?? 1} Z${n(s.thickness ?? 0)}`, label: 'Setting work Z', timeoutMs: 5000 },
     { line: `G91 G0 Z${n(s.retract)}`, label: 'Lifting', timeoutMs: 10000 },
-    { line: restore, label: 'Finishing', timeoutMs: 5000 },
+    { line: restoreModalLine(distance, units), label: 'Finishing', timeoutMs: 5000 },
   ];
 }
 
-class ProbeError extends Error {
-  constructor(message: string, readonly hint: string | null = null) {
-    super(message);
-  }
-}
-
 let cancelRequested = false;
-
-function hintFor(line: string): string | null {
-  if (/^ALARM:5/.test(line)) return 'No contact within the max travel. Check the clip and plate wire, or start closer to the plate.';
-  if (/^ALARM:4/.test(line)) return 'The probe was already touching when the move started. Check the wiring and that the clip is not touching the plate.';
-  if (/hom/i.test(line)) return 'FluidNC refuses motion until the machine has been homed (start/must_home). Home first, or turn must_home off in Settings.';
-  if (/^error:9\b/.test(line)) return 'The controller is locked (Alarm). Home or Unlock first.';
-  if (/^ALARM:/.test(line)) return 'The controller is in Alarm. The position may be lost: check it before continuing.';
-  return null;
-}
-
-/** Sends one line and resolves on its `ok`; rejects on error/alarm/no contact/timeout/disconnect. */
-function sendStep(step: Step): Promise<{ contactZ: number | null }> {
-  return new Promise((resolve, reject) => {
-    let contactZ: number | null = null;
-    let contact = false;
-    const stop = (err: ProbeError | null) => {
-      clearTimeout(timer);
-      clearInterval(watch);
-      unsubscribe();
-      if (err) reject(err);
-      else resolve({ contactZ });
-    };
-    const unsubscribe = onSerialLine((raw) => {
-      const line = raw.trim();
-      const prb = /^\[PRB:([^:\]]+):(\d)\]/.exec(line);
-      if (prb) {
-        contact = prb[2] === '1';
-        const z = Number(prb[1].split(',')[2]);
-        contactZ = Number.isFinite(z) ? z : null;
-        if (!contact) stop(new ProbeError('The probe did not touch the plate', hintFor('ALARM:5')));
-        return;
-      }
-      if (line === 'ok') {
-        if (step.probe && !contact) stop(new ProbeError(`${step.label}: no contact was reported`, hintFor('ALARM:5')));
-        else stop(null);
-        return;
-      }
-      if (/^error:/i.test(line) || /^ALARM:/i.test(line)) {
-        stop(new ProbeError(`${step.label} failed: ${line}`, hintFor(line)));
-      }
-    });
-    const timer = setTimeout(() => stop(new ProbeError(`${step.label}: no reply from the controller in time`, 'The move may still be running. Use Hold or Reset in the top bar if needed.')), step.timeoutMs);
-    const watch = setInterval(() => {
-      if (getState().connection.phase !== 'open') stop(new ProbeError('The connection to the controller was lost'));
-      else if (cancelRequested) stop(new ProbeError('Cancelled'));
-    }, 100);
-    sendGcode(step.line);
-  });
-}
 
 /** Runs the probe sequence. Callers check derive.probeView() first. */
 export async function runProbe(settings: ProbeSettings): Promise<void> {
@@ -187,11 +124,11 @@ export async function runProbe(settings: ProbeSettings): Promise<void> {
   for (let i = 0; i < steps.length; i++) {
     setState((s) => ({ ...s, probe: { phase: 'running', step: i + 1, steps: steps.length, label: steps[i].label, cancelling: cancelRequested } }));
     try {
-      const result = await sendStep(steps[i]);
-      if (steps[i].probe && result.contactZ !== null) contactZ = result.contactZ;
+      const result = await sendStep(steps[i], () => cancelRequested);
+      if (steps[i].probe && result.contact) contactZ = result.contact.z;
     } catch (err) {
-      const e = err instanceof ProbeError ? err : new ProbeError(err instanceof Error ? err.message : 'Probing failed');
-      if (cancelRequested) {
+      const e = err instanceof SequenceError ? err : new SequenceError(err instanceof Error ? err.message : 'Probing failed');
+      if (cancelRequested || e.cancelled) {
         setState((s) => ({ ...s, probe: { phase: 'cancelled', at: Date.now() } }));
       } else {
         setState((s) => ({ ...s, probe: { phase: 'failed', message: e.message, hint: e.hint, at: Date.now() } }));

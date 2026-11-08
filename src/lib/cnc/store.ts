@@ -59,6 +59,23 @@ export interface MachineState {
   configBusy: boolean;
   /** Client-side: the Z probe sequence (lib/cnc/probe.ts). */
   probe: ProbeRun;
+  /** Client-side: the height-map probing run (lib/leveling/run.ts). */
+  leveling: LevelingRun;
+}
+
+export type LevelingRun =
+  | { phase: 'idle' }
+  | { phase: 'running'; done: number; total: number; label: string; cancelling: boolean; startedAt: number }
+  | { phase: 'done'; at: number }
+  | { phase: 'failed'; message: string; hint: string | null; at: number }
+  | { phase: 'cancelled'; at: number };
+
+/** Height-map leveling applied to a loaded program (passed in the gcode:load context). */
+export interface ProgramLeveling {
+  mapId: string;
+  wcs: string;
+  wco: { x: number; y: number; z: number };
+  sourceName: string;
 }
 
 export type ProbeRun =
@@ -78,6 +95,8 @@ export interface LoadedProgram {
   gcode: string;
   /** Job-library id passed in the `gcode:load` context, when the program came from the library. */
   jobId: string | null;
+  /** Set when this program is a height-map leveled version (Kinetiq bed leveling). */
+  leveling: ProgramLeveling | null;
 }
 
 export type StopSequence =
@@ -107,6 +126,7 @@ const initialState: MachineState = {
   jobErrors: null,
   configBusy: false,
   probe: { phase: 'idle' },
+  leveling: { phase: 'idle' },
 };
 
 let state: MachineState = initialState;

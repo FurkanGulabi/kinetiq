@@ -7,7 +7,7 @@
 import { AlertTriangle, FileCode2, FolderOpen, Info, Loader2, Pause, Play, Square, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { clearStopFailure, sendCommand, stopJob } from '@/lib/cnc/client';
-import { jobStatus, jobView, runErrors, type JobStatus } from '@/lib/cnc/derive';
+import { jobStatus, jobView, levelingDrift, runErrors, type JobStatus } from '@/lib/cnc/derive';
 import { getState, subscribe, useMachine } from '@/lib/cnc/store';
 import {
   formatBytes,
@@ -165,6 +165,8 @@ export function JobPanel() {
   }
 
   const record = view.program?.jobId ? library.jobs.find((j) => j.id === view.program?.jobId) : undefined;
+  const leveled = machine.program?.leveling ?? null;
+  const leveledDrift = leveled ? levelingDrift(machine, leveled) : null;
   const meterTone =
     view.status === 'completed' ? 'ok' : view.status === 'error' ? 'crit' : view.status === 'paused' ? 'warn' : view.status === 'cancelled' ? 'neutral' : 'accent';
   const paused = view.status === 'paused';
@@ -192,6 +194,12 @@ export function JobPanel() {
               <div className="text-[11px] text-ink-3 tabular-nums">
                 {view.program.lines.toLocaleString()} lines
                 {record ? ` · ${formatBytes(record.size)}` : ''}
+                {leveled ? (
+                  <span className={leveledDrift ? 'text-warn' : 'text-accent'} title={leveledDrift ?? `Height-map leveled from ${leveled.sourceName}`}>
+                    {' · '}
+                    {leveledDrift ? 'Leveled — map no longer lines up' : 'Leveled'}
+                  </span>
+                ) : null}
               </div>
             </div>
             <Button

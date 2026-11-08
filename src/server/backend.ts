@@ -1,9 +1,10 @@
 /**
- * Kinetiq ↔ CNCjs bootstrap.
+ * Kinetiq CNC backend bootstrap.
  *
- * Loads the *unmodified* CNCjs server build (`cncjs-app`, built from CNCJS-fork) and prepares
- * the process-wide singletons CNCEngine depends on. This replaces the ~20 lines of
- * CNCJS-fork/src/server/index.js (config load + secret) that Kinetiq needs.
+ * The backend in src/server/cnc/ is the CNCjs GRBL server code (CNCEngine, GrblController,
+ * Sender, Feeder, Workflow, SerialConnection, config/store/logger services) carried over
+ * verbatim as JavaScript, minus the Marlin/Smoothie/TinyG controllers and the Express app.
+ * This file does what CNCjs's server/index.js did for it: load the rc file and the secret.
  *
  * SERVER-ONLY: never import this file from src/app, src/components or src/lib.
  * See docs/BACKEND_INTEGRATION.md §5.1.
@@ -13,14 +14,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type http from 'node:http';
-
-const CNCJS_SERVER_DIR = (() => {
-  try {
-    return path.dirname(require.resolve('cncjs-app/server/index.js'));
-  } catch {
-    return null;
-  }
-})();
 
 export interface CNCEngineInstance {
   io: { close(): void } | null;
@@ -32,7 +25,6 @@ export interface CNCSettings {
   secret: string;
   rcfile: string;
   accessTokenLifetime: string;
-  version: string;
 }
 
 interface ConfigStore {
@@ -53,49 +45,25 @@ interface ImmutableStore {
   unset(key: string): void;
 }
 
-export interface CNCjsBackend {
+export interface CNCBackend {
   settings: CNCSettings;
   engine: CNCEngineInstance;
   store: ImmutableStore;
 }
 
-/** Fails fast with instructions if the CNCjs server build is missing. */
-function assertBuildPresent(): string {
-  if (!CNCJS_SERVER_DIR || !fs.existsSync(path.join(CNCJS_SERVER_DIR, 'services/cncengine/CNCEngine.js'))) {
-    throw new Error(
-      [
-        'The CNCjs server build was not found (package "cncjs-app").',
-        'Build it from the fork, then reinstall Kinetiq dependencies:',
-        '  cd ../CNCJS-fork && yarn install',
-        '  mkdir -p dist/cncjs && cp -af src/package.json dist/cncjs/',
-        '  NODE_ENV=production yarn babel -d dist/cncjs/server src/server --ignore "src/server/**/__tests__/**"',
-        '  cp -af src/server/i18n src/server/views dist/cncjs/server/',
-        '  cd ../new-cnc-app && npm install',
-      ].join('\n'),
-    );
-  }
-  return CNCJS_SERVER_DIR;
-}
-
 /**
  * Loads config + secret and constructs (but does not start) the CNC engine.
- * Must run after process.env.NODE_ENV is set: CNCjs evaluates its settings on first require.
+ * Must run after process.env.NODE_ENV is set: the settings module reads it on first require.
  */
-export function loadCNCjs(): CNCjsBackend {
-  assertBuildPresent();
+export function loadBackend(): CNCBackend {
+  // Required lazily so NODE_ENV (set in server.ts) is in effect when these modules evaluate.
+  const settings: CNCSettings = require('./cnc/config/settings').default;
+  const config: ConfigStore = require('./cnc/services/configstore').default;
+  const { setLevel } = require('./cnc/lib/logger') as { setLevel(level: string): void };
+  const store: ImmutableStore = require('./cnc/store').default;
+  const CNCEngine: new () => CNCEngineInstance = require('./cnc/services/cncengine/CNCEngine').default;
 
-  // The CNCjs build is Babel output that references the global `regeneratorRuntime`
-  // (CNCjs's own server-cli.js loads it the same way).
-  require('regenerator-runtime/runtime');
-
-  const settings: CNCSettings = require('cncjs-app/server/config/settings').default;
-  const config: ConfigStore = require('cncjs-app/server/services/configstore').default;
-  const logger = require('cncjs-app/server/lib/logger');
-  const store: ImmutableStore = require('cncjs-app/server/store').default;
-  const CNCEngine: new () => CNCEngineInstance =
-    require('cncjs-app/server/services/cncengine/CNCEngine').default;
-
-  logger.setLevel(process.env.KINETIQ_LOG_LEVEL || 'info');
+  setLevel(process.env.KINETIQ_LOG_LEVEL || 'info');
 
   // Kinetiq keeps its own rc file so it never mixes configuration with an installed CNCjs (~/.cncrc).
   const rcfile = path.resolve(process.env.KINETIQ_RC || path.join(os.homedir(), '.kinetiqrc'));
@@ -113,7 +81,7 @@ export function loadCNCjs(): CNCjsBackend {
   return { settings, engine: new CNCEngine(), store };
 }
 
-/** Closes every open serial port through the CNCjs controller API (used on shutdown). */
+/** Closes every open serial port through the controller API (used on shutdown). */
 export function closeAllControllers(store: ImmutableStore, log: (msg: string) => void): Promise<void> {
   const controllers = store.get<Record<string, CNCControllerLike | undefined>>('controllers', {});
   const tasks = Object.entries(controllers).map(([port, controller]) => new Promise<void>((resolve) => {

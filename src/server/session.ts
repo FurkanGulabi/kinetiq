@@ -1,7 +1,7 @@
 /**
  * GET /api/kinetiq/session → { token }
  *
- * Mints the JWT that CNCjs's Socket.IO handshake requires (socketio-jwt, handshake: true).
+ * Mints the JWT that the CNCEngine Socket.IO handshake requires (socketio-jwt, handshake: true).
  * Same token format as CNCjs `api.users.signin` with no users configured: { id: '', name: '' }.
  * Served by the custom server itself because it must share the engine's `settings.secret`.
  *
@@ -9,7 +9,7 @@
  */
 import type http from 'node:http';
 import jwt from 'jsonwebtoken';
-import type { CNCSettings } from './cncjs';
+import type { CNCSettings } from './backend';
 
 export const SESSION_PATH = '/api/kinetiq/session';
 

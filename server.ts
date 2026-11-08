@@ -4,7 +4,7 @@
  *   http.Server (127.0.0.1:8000)
  *    ├── GET /api/kinetiq/session → JWT for the Socket.IO handshake
  *    ├── /api/kinetiq/jobs/*     → job library (uploaded G-code + recent runs)
- *    ├── /socket.io/*            → CNCjs CNCEngine (Socket.IO 2.2, unmodified)
+ *    ├── /socket.io/*            → CNCEngine (src/server/cnc, Socket.IO 2.2)
  *    └── everything else         → Next.js
  *
  * See docs/BACKEND_INTEGRATION.md §5 for the boot order and shutdown behaviour.
@@ -13,7 +13,7 @@ import http from 'node:http';
 import { parse } from 'node:url';
 
 const dev = process.env.NODE_ENV !== 'production';
-// CNCjs evaluates its settings on first require, so NODE_ENV must be set before loadCNCjs().
+// The backend evaluates its settings on first require, so NODE_ENV must be set before loadBackend().
 (process.env as Record<string, string>).NODE_ENV = dev ? 'development' : 'production';
 
 const hostname = process.env.KINETIQ_HOST || '127.0.0.1';
@@ -22,14 +22,14 @@ const port = Number(process.env.KINETIQ_PORT || process.env.PORT || 8000);
 const log = (msg: string) => console.log(`[kinetiq] ${msg}`);
 
 async function main() {
-  // Imported lazily so NODE_ENV above is in effect when CNCjs loads.
-  const { loadCNCjs, closeAllControllers } = await import('./src/server/cncjs');
+  // Imported lazily so NODE_ENV above is in effect when the backend loads.
+  const { loadBackend, closeAllControllers } = await import('./src/server/backend');
   const { handleSession, SESSION_PATH } = await import('./src/server/session');
   const { handleJobs, JOBS_PATH } = await import('./src/server/jobs');
   const next = (await import('next')).default;
 
-  const { settings, engine, store } = loadCNCjs();
-  log(`CNCjs backend loaded (config: ${settings.rcfile})`);
+  const { settings, engine, store } = loadBackend();
+  log(`CNC backend loaded (config: ${settings.rcfile})`);
 
   let handle: ((req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>) | null = null;
 

@@ -19,7 +19,7 @@ import type http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import jwt from 'jsonwebtoken';
-import type { CNCSettings } from './cncjs';
+import type { CNCSettings } from './backend';
 import { isLoopbackHost } from './session';
 
 export const JOBS_PATH = '/api/kinetiq/jobs';

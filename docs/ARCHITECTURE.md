@@ -37,7 +37,7 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 |---|---|---|
 | Framework | **Next.js** (App Router, current stable; exact version pinned at M1) + **React** + **TypeScript** | As required |
 | Process host | **Next.js custom server** (`server.ts`) | Hosts CNCEngine on the same `http.Server` (D1) |
-| Machine backend | **CNCjs server build** (`cncjs-app`, `file:../CNCJS-fork/dist/cncjs`) | Reused unchanged (D2) |
+| Machine backend | **Built-in CNCjs GRBL backend** (`src/server/cnc`, carried over from CNCJS-fork) | Same logic as CNCjs, no external fork (D2, revised 2026-11-08) |
 | Realtime client | **`socket.io-client@2.x`** | Protocol lock-step with the CNCjs Socket.IO 2.2 server (D3) |
 | Styling | **Tailwind CSS v4** with CSS-variable design tokens (`@theme`) | As required; tokens are defined once |
 | Primitives | **Radix UI**, only `@radix-ui/react-select` and `@radix-ui/react-dialog` | Accessible select and confirmation dialog without a full component library |
@@ -64,9 +64,10 @@ new-cnc-app/
 ├── docs/                        ← this documentation
 └── src/
     ├── server/                  SERVER-ONLY. Imported by server.ts, never by src/app or src/components.
-    │   ├── cncjs.ts             require() of the three CNCjs modules; config/secret bootstrap
+    │   ├── backend.ts           loads src/server/cnc (config, secret, CNCEngine); shutdown helper
+    │   ├── cnc/                 CNCjs GRBL server code (JavaScript, see cnc/README.md)
     │   ├── session.ts           GET /api/kinetiq/session (JWT mint, Host check)
-    │   └── cncjs.d.ts           ambient types for cncjs-app/server/… modules used
+    │   └── jobs.ts              /api/kinetiq/jobs (job library)
     ├── app/
     │   ├── layout.tsx           <html>, fonts, metadata ("Kinetiq")
     │   ├── page.tsx             renders <Workspace/> (static shell)
@@ -90,7 +91,7 @@ new-cnc-app/
         └── console/ConsolePanel.tsx    log list + input
 ```
 
-**Import boundary (safety-relevant):** nothing under `src/app`, `src/components` or `src/lib` may import `src/server/**` or `cncjs-app`. This keeps serialport and CNCEngine out of Next's bundles and HMR, so the process can never hold two engines or two handles on the port.
+**Import boundary (safety-relevant):** nothing under `src/app`, `src/components` or `src/lib` may import `src/server/**`. This keeps serialport and CNCEngine out of Next's bundles and HMR, so the process can never hold two engines or two handles on the port.
 
 ---
 
@@ -374,7 +375,7 @@ Order, at the far right of the top bar: **Home · Unlock │ Hold/Resume · Rese
   - `build`: `next build && tsc -p tsconfig.server.json`
   - `start`: `NODE_ENV=production node dist/server.js`
 - **Never** set `output: 'standalone'`, because it does not trace a custom server.
-- The prerequisite check (`dist/cncjs/server` exists) runs at server boot and fails fast with clear instructions.
+- The backend ships inside Kinetiq (`src/server/cnc`), so there is no external build to check at boot.
 
 ---
 

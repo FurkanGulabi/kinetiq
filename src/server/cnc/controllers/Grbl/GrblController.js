@@ -1,6 +1,5 @@
 import {
   ensureArray,
-  ensurePositiveNumber,
   ensureFiniteNumber,
   ensureString,
 } from 'ensure-type';
@@ -32,22 +31,13 @@ import {
   // Builtin Commands
   BUILTIN_COMMAND_MSG,
   BUILTIN_COMMAND_WAIT,
-  // M6 Tool Change
-  TOOL_CHANGE_POLICY_IGNORE_M6_COMMANDS,
-  TOOL_CHANGE_POLICY_SEND_M6_COMMANDS,
-  TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_WCS,
-  TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_TLO,
-  TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_CUSTOM_PROBING,
-  // Units
-  IMPERIAL_UNITS,
-  METRIC_UNITS,
   // Write Source
   WRITE_SOURCE_CLIENT,
   WRITE_SOURCE_FEEDER
 } from '../constants';
 import * as builtinCommand from '../utils/builtin-command';
 import { isM0, isM1, isM6, replaceM6 } from '../utils/gcode';
-import { in2mm, mapPositionToUnits, mapValueToUnits } from '../utils/units';
+import { in2mm } from '../utils/units';
 import GrblRunner from './GrblRunner';
 import {
   GRBL,
@@ -301,34 +291,14 @@ class GrblController {
           if (words.find(isM6)) {
             log.debug(`M6 Tool Change: line=${x(originalLine)}`);
 
-            const toolChangePolicy = config.get('tool.toolChangePolicy', TOOL_CHANGE_POLICY_IGNORE_M6_COMMANDS);
-            const isManualToolChange = [
-              TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_WCS,
-              TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_TLO,
-              TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_CUSTOM_PROBING,
-            ].includes(toolChangePolicy);
+            // Kinetiq: M6 is always a manual tool-change pause (CNCjs's default policy).
+            // M6 is commented out so it never reaches the controller.
+            line = replaceM6(line, (x) => `(${x})`); // replace with parentheses
 
-            if (toolChangePolicy === TOOL_CHANGE_POLICY_IGNORE_M6_COMMANDS) {
-              // Ignore M6 commands
-              line = replaceM6(line, (x) => `(${x})`); // replace with parentheses
-
-              this.feeder.hold({
-                data: 'M6',
-                msg: this.messageSlot.take() ?? originalLine,
-              });
-            } else if (toolChangePolicy === TOOL_CHANGE_POLICY_SEND_M6_COMMANDS) {
-              // Send M6 commands
-            } else if (isManualToolChange) {
-              // Manual Tool Change
-              line = replaceM6(line, (x) => `(${x})`); // replace with parentheses
-
-              this.feeder.hold({
-                data: 'M6',
-                msg: this.messageSlot.take() ?? originalLine,
-              });
-
-              this.command('tool:change');
-            }
+            this.feeder.hold({
+              data: 'M6',
+              msg: this.messageSlot.take() ?? originalLine,
+            });
           }
 
           return line;
@@ -439,36 +409,15 @@ class GrblController {
           if (words.find(isM6)) {
             log.debug(`M6 Tool Change: line=${x(originalLine)}, sent=${sent}, received=${received}`);
 
-            const toolChangePolicy = config.get('tool.toolChangePolicy', TOOL_CHANGE_POLICY_IGNORE_M6_COMMANDS);
-            const isManualToolChange = [
-              TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_WCS,
-              TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_TLO,
-              TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_CUSTOM_PROBING,
-            ].includes(toolChangePolicy);
+            // Kinetiq: M6 is always a manual tool-change pause (CNCjs's default policy).
+            // M6 is commented out so it never reaches the controller.
+            line = replaceM6(line, (x) => `(${x})`); // replace with parentheses
 
-            if (toolChangePolicy === TOOL_CHANGE_POLICY_IGNORE_M6_COMMANDS) {
-              // Ignore M6 commands
-              line = replaceM6(line, (x) => `(${x})`); // replace with parentheses
-
-              this.event.trigger('gcode:pause');
-              this.workflow.pause({
-                data: 'M6',
-                msg: this.messageSlot.take() ?? originalLine,
-              });
-            } else if (toolChangePolicy === TOOL_CHANGE_POLICY_SEND_M6_COMMANDS) {
-              // Send M6 commands
-            } else if (isManualToolChange) {
-              // Manual Tool Change
-              line = replaceM6(line, (x) => `(${x})`); // replace with parentheses
-
-              this.event.trigger('gcode:pause');
-              this.workflow.pause({
-                data: 'M6',
-                msg: this.messageSlot.take() ?? originalLine,
-              });
-
-              this.command('tool:change');
-            }
+            this.event.trigger('gcode:pause');
+            this.workflow.pause({
+              data: 'M6',
+              msg: this.messageSlot.take() ?? originalLine,
+            });
           }
 
           return line;
@@ -1576,26 +1525,6 @@ class GrblController {
             this.write('\x97');
           }
         },
-        'lasertest:on': () => {
-          const [power = 0, duration = 0, maxS = 1000] = args;
-          const commands = [
-            // https://github.com/gnea/grbl/wiki/Grbl-v1.1-Laser-Mode
-            // The laser will only turn on when Grbl is in a G1, G2, or G3 motion mode.
-            'G1F1',
-            'M3S' + ensurePositiveNumber(maxS * (power / 100))
-          ];
-          if (duration > 0) {
-            commands.push('G4P' + ensurePositiveNumber(duration / 1000));
-            commands.push('M5S0');
-          }
-          this.command('gcode', commands);
-        },
-        'lasertest:off': () => {
-          const commands = [
-            'M5S0'
-          ];
-          this.command('gcode', commands);
-        },
         'gcode': () => {
           const [commands, context] = args;
           const data = ensureArray(commands)
@@ -1666,117 +1595,6 @@ class GrblController {
 
             this.command('gcode:load', file, data, context, callback);
           });
-        },
-        'tool:change': () => {
-          const modal = this.runner.getModalGroup();
-          const units = {
-            'G20': IMPERIAL_UNITS,
-            'G21': METRIC_UNITS,
-          }[modal.units];
-          const toolChangePolicy = config.get('tool.toolChangePolicy', TOOL_CHANGE_POLICY_IGNORE_M6_COMMANDS);
-          const toolChangeX = mapPositionToUnits(config.get('tool.toolChangeX', 0), units);
-          const toolChangeY = mapPositionToUnits(config.get('tool.toolChangeY', 0), units);
-          const toolChangeZ = mapPositionToUnits(config.get('tool.toolChangeZ', 0), units);
-          const toolProbeX = mapPositionToUnits(config.get('tool.toolProbeX', 0), units);
-          const toolProbeY = mapPositionToUnits(config.get('tool.toolProbeY', 0), units);
-          const toolProbeZ = mapPositionToUnits(config.get('tool.toolProbeZ', 0), units);
-          const toolProbeCustomCommands = ensureString(config.get('tool.toolProbeCustomCommands')).split('\n');
-          const toolProbeCommand = config.get('tool.toolProbeCommand', 'G38.2');
-          const toolProbeDistance = mapValueToUnits(config.get('tool.toolProbeDistance', 1), units);
-          const toolProbeFeedrate = mapValueToUnits(config.get('tool.toolProbeFeedrate', 10), units);
-          const touchPlateHeight = mapValueToUnits(config.get('tool.touchPlateHeight', 0), units);
-
-          const context = {
-            'tool_change_x': toolChangeX,
-            'tool_change_y': toolChangeY,
-            'tool_change_z': toolChangeZ,
-            'tool_probe_x': toolProbeX,
-            'tool_probe_y': toolProbeY,
-            'tool_probe_z': toolProbeZ,
-            'tool_probe_command': toolProbeCommand,
-            'tool_probe_distance': toolProbeDistance,
-            'tool_probe_feedrate': toolProbeFeedrate,
-            'touch_plate_height': touchPlateHeight,
-
-            // internal functions
-            'mapWCSToPValue': function (wcs) {
-              return {
-                'G54': 1,
-                'G55': 2,
-                'G56': 3,
-                'G57': 4,
-                'G58': 5,
-                'G59': 6,
-              }[wcs] || 0;
-            },
-          };
-
-          const lines = [];
-
-          // Wait until the planner queue is empty
-          lines.push('%wait');
-
-          // Remember original position and spindle state
-          lines.push('%_posx=posx');
-          lines.push('%_posy=posy');
-          lines.push('%_posz=posz');
-          lines.push('%_modal_spindle=modal.spindle');
-
-          // Stop the spindle
-          lines.push('M5');
-
-          // Absolute positioning
-          lines.push('G90');
-
-          // Move to the tool change position
-          lines.push('G53 G0 Z[tool_change_z]');
-          lines.push('G53 G0 X[tool_change_x] Y[tool_change_y]');
-          lines.push('%wait');
-
-          // Prompt the user to change the tool
-          lines.push('%msg Tool Change T[tool]');
-          lines.push('M0');
-
-          // Move to the tool probe position
-          lines.push('G53 G0 X[tool_probe_x] Y[tool_probe_y]');
-          lines.push('G53 G0 Z[tool_probe_z]');
-          lines.push('%wait');
-
-          if (toolChangePolicy === TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_WCS) {
-            // Probe the tool
-            lines.push('G91 [tool_probe_command] F[tool_probe_feedrate] Z[tool_probe_z - mposz - tool_probe_distance]');
-            // Set coordinate system offset
-            lines.push('G10 L20 P[mapWCSToPValue(modal.wcs)] Z[touch_plate_height]');
-          } else if (toolChangePolicy === TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_TLO) {
-            // Probe the tool
-            lines.push('G91 [tool_probe_command] F[tool_probe_feedrate] Z[tool_probe_z - mposz - tool_probe_distance]');
-            // Pause for 1 second
-            lines.push('%wait 1');
-            // Set tool length offset
-            lines.push('G43.1 Z[posz - touch_plate_height]');
-          } else if (toolChangePolicy === TOOL_CHANGE_POLICY_MANUAL_TOOL_CHANGE_CUSTOM_PROBING) {
-            lines.push(...toolProbeCustomCommands);
-          }
-
-          // Move to the tool change position
-          lines.push('G53 G0 Z[tool_change_z]');
-          lines.push('G53 G0 X[tool_change_x] Y[tool_change_y]');
-          lines.push('%wait');
-
-          // Prompt the user to restart the spindle
-          lines.push('%msg Restart Spindle');
-          lines.push('M0');
-
-          // Restore the position and spindle state
-          lines.push('G90');
-          lines.push('G0 X[_posx] Y[_posy]');
-          lines.push('G0 Z[_posz]');
-          lines.push('[_modal_spindle]');
-
-          // Wait 5 seconds for the spindle to speed up
-          lines.push('%wait 5');
-
-          this.command('gcode', lines, context);
         },
         'autolevel:start': () => {
           const [params = {}] = args;

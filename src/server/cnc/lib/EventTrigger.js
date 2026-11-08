@@ -2,6 +2,10 @@ import config from '../services/configstore';
 
 const noop = () => {};
 
+// SECURITY (Kinetiq): `commands` come only from the rc file's `events` entries. A 'system'
+// trigger runs them through the shell (services/taskrunner), so they must never come from
+// frontend input. See services/taskrunner/index.js.
+
 class EventTrigger {
   constructor(callback = noop) {
     this.callback = callback || noop;

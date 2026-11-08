@@ -1,0 +1,94 @@
+@import 'tailwindcss';
+
+/* Hover styles only for precise pointers — touch taps must not leave hover states behind. */
+@custom-variant hover-fine {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
+/*
+ * Kinetiq design tokens — docs/ARCHITECTURE.md §9.
+ * Dark theme only (v1). One accent; three status colors that always pair with an icon + label.
+ */
+@theme {
+  --color-bg: #0d0e10;
+  --color-surface: #15171a;
+  --color-surface-2: #1c1f23;
+  --color-line: #262a2f;
+  --color-ink: #e7e9ec;
+  --color-ink-2: #a1a7af;
+  --color-ink-3: #6b727b;
+  --color-accent: #5ab8ff;
+  --color-accent-track: #1b3245;
+  --color-ok: #0ca30c;
+  --color-warn: #fab219;
+  --color-crit: #d03b3b;
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Pressable feedback: instant on pointer-down, transform only (emil-design-eng). */
+  .pressable {
+    transition: transform 120ms var(--ease-out-strong), background-color 120ms ease, border-color 120ms ease,
+      color 120ms ease;
+  }
+  .pressable:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .panel-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pressable {
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .pressable:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --color-line: #6b727b;
+    --color-surface-2: #24282d;
+  }
+}

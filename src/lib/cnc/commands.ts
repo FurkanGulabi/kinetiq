@@ -37,7 +37,7 @@ export function isValidFeed(value: number, units: Units): boolean {
   return Number.isFinite(value) && value > 0 && value <= MAX_JOG_FEED[units];
 }
 
-const WCS_P: Record<string, number> = { G54: 1, G55: 2, G56: 3, G57: 4, G58: 5, G59: 6 };
+export const WCS_P: Record<string, number> = { G54: 1, G55: 2, G56: 3, G57: 4, G58: 5, G59: 6 };
 
 /**
  * Set the current position as work zero for one axis in the active WCS

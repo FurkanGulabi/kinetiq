@@ -177,6 +177,7 @@ export async function startClient(): Promise<void> {
   let lastProgramLine: string | null = null;
   on('serialport:read', (line) => {
     if (typeof line !== 'string') return;
+    lineListeners.forEach((listener) => listener(line));
     const match = FIRMWARE_PATTERN.exec(line);
     if (match) {
       setState((s) => ({ ...s, controller: { ...s.controller, firmware: `FluidNC v${match[1]}` } }));
@@ -225,6 +226,17 @@ export async function startClient(): Promise<void> {
     }));
   });
   on('gcode:unload', () => setState((s) => ({ ...s, program: null })));
+}
+
+const lineListeners = new Set<(line: string) => void>();
+
+/**
+ * Every line the controller sends that the backend forwards (`serialport:read`: ok, error:N,
+ * ALARM:N, [PRB:…], [MSG:…], …). For step-by-step sequences such as the Z probe.
+ */
+export function onSerialLine(listener: (line: string) => void): () => void {
+  lineListeners.add(listener);
+  return () => lineListeners.delete(listener);
 }
 
 export function listPorts(): void {

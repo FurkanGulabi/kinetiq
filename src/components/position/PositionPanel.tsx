@@ -7,6 +7,7 @@
  * Per axis (AxisRow): Go to (absolute jog), Zero (G10 L20), Home ($H<axis>).
  * Jog: one `$J=` line per press through the CNCjs Feeder; centre button = jog cancel (0x85).
  * Go to zero: `$J=G90` to work X0 Y0 (+ Z0 when "Include Z"; Z is raised first when below zero).
+ * Probe Z (ProbeSection): touch-plate probing that sets work Z0 at the stock surface.
  * No optimistic state — the readout only changes when the controller reports a new position.
  */
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Crosshair, Square } from 'lucide-react';
@@ -28,6 +29,7 @@ import { Button } from '@/components/ui/Button';
 import { Panel } from '@/components/ui/Panel';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { AxisRow } from './AxisRow';
+import { ProbeSection } from './ProbeSection';
 
 const PREFS_KEY = 'kinetiq.jog';
 const ZERO_Z_KEY = 'kinetiq.goZeroIncludeZ';
@@ -188,6 +190,7 @@ export function PositionPanel() {
 
   return (
     <Panel
+      className="overflow-y-auto"
       title="Position"
       actions={
         <span className="font-mono">
@@ -340,6 +343,8 @@ export function PositionPanel() {
           jog.reason ?? `Each press moves ${step} ${units} at ${feed} ${units}/min.`
         )}
       </p>
+
+      <ProbeSection />
     </Panel>
   );
 }

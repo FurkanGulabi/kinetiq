@@ -57,7 +57,16 @@ export interface MachineState {
   jobErrors: JobErrors | null;
   /** Client-side: a machine settings (FluidNC config) operation is talking to the controller. */
   configBusy: boolean;
+  /** Client-side: the Z probe sequence (lib/cnc/probe.ts). */
+  probe: ProbeRun;
 }
+
+export type ProbeRun =
+  | { phase: 'idle' }
+  | { phase: 'running'; step: number; steps: number; label: string; cancelling: boolean }
+  | { phase: 'done'; contactZ: number | null; thickness: number; retract: number; at: number }
+  | { phase: 'failed'; message: string; hint: string | null; at: number }
+  | { phase: 'cancelled'; at: number };
 
 export interface JobErrors {
   startTime: number;
@@ -97,6 +106,7 @@ const initialState: MachineState = {
   stopSequence: { phase: 'idle' },
   jobErrors: null,
   configBusy: false,
+  probe: { phase: 'idle' },
 };
 
 let state: MachineState = initialState;

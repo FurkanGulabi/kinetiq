@@ -84,7 +84,15 @@ export interface ControlState {
   reason?: string;
 }
 
-const CONFIG_BUSY = 'Settings operation in progress';
+/**
+ * A Kinetiq operation that is talking to the controller line by line (settings read/save, Z probe).
+ * While one runs, other line commands are blocked so they cannot interleave with it.
+ */
+export function busyReason(s: MachineState): string | null {
+  if (s.configBusy) return 'Settings operation in progress';
+  if (s.probe.phase === 'running') return 'Probing in progress';
+  return null;
+}
 
 /**
  * Machine settings editor (docs/SETTINGS_EDITOR.md §4.5, §6): reading the FluidNC config needs a
@@ -97,7 +105,8 @@ export function settingsView(s: MachineState): ControlState {
   if (s.workflow !== 'idle') return { enabled: false, reason: 'Not available while a job is running or paused' };
   if (active !== 'Idle' && active !== 'Alarm') return { enabled: false, reason: `Machine is ${active}: wait until it is Idle` };
   if (s.feeder?.pending) return { enabled: false, reason: 'Waiting for the previous command to be accepted' };
-  if (s.configBusy) return { enabled: false, reason: CONFIG_BUSY };
+  const busy = busyReason(s);
+  if (busy) return { enabled: false, reason: busy };
   return { enabled: true };
 }
 
@@ -137,8 +146,8 @@ export function machineControlsView(s: MachineState): MachineControlsView {
     ? off(notReady)
     : !workflowIdle
       ? off(jobActive)
-      : s.configBusy
-        ? off(CONFIG_BUSY)
+      : busyReason(s)
+        ? off(busyReason(s)!)
         : active === 'Idle' || active === 'Alarm'
         ? on
         : off(`Not available while ${active}`);
@@ -147,8 +156,8 @@ export function machineControlsView(s: MachineState): MachineControlsView {
     ? off(notReady)
     : !workflowIdle
       ? off(jobActive)
-      : s.configBusy
-        ? off(CONFIG_BUSY)
+      : busyReason(s)
+        ? off(busyReason(s)!)
         : active === 'Alarm'
         ? on
         : off('Only needed in Alarm');
@@ -222,8 +231,8 @@ export function jogView(s: MachineState): { canJog: boolean; canCancel: boolean;
   if (s.feeder?.pending) {
     return { canJog: false, canCancel, reason: 'Waiting for the previous command to be accepted' };
   }
-  if (s.configBusy) {
-    return { canJog: false, canCancel, reason: CONFIG_BUSY };
+  if (busyReason(s)) {
+    return { canJog: false, canCancel, reason: busyReason(s) };
   }
   return { canJog: true, canCancel, reason: null };
 }
@@ -254,8 +263,8 @@ export function axisControlsView(s: MachineState): AxisControlsView {
     const r = off('Not available while a job is running or paused');
     return { home: r, zero: r, goTo: r };
   }
-  if (s.configBusy) {
-    const r = off(CONFIG_BUSY);
+  if (busyReason(s)) {
+    const r = off(busyReason(s)!);
     return { home: r, zero: r, goTo: r };
   }
   const alarm = 'Alarm — use Home or Unlock first';
@@ -409,8 +418,8 @@ export function jobView(s: MachineState, now: number): JobView {
       ? off(jobBusy)
       : stopping
         ? off('Stopping…')
-        : s.configBusy
-          ? off(CONFIG_BUSY)
+        : busyReason(s)
+          ? off(busyReason(s)!)
           : on;
   const canUnload = !s.program ? off('No program loaded') : !ready ? off(notReady) : s.workflow !== 'idle' ? off(jobBusy) : on;
 
@@ -421,7 +430,7 @@ export function jobView(s: MachineState, now: number): JobView {
   else if (active === 'Alarm') start = off('Alarm — use Home or Unlock in the top bar first');
   else if (active !== 'Idle') start = off(`Cannot start while ${active}`);
   else if (s.feeder?.pending) start = off('Waiting for the previous command to be accepted');
-  else if (s.configBusy) start = off(CONFIG_BUSY);
+  else if (busyReason(s)) start = off(busyReason(s)!);
   else start = on;
 
   const pauseMode: 'pause' | 'resume' = s.workflow === 'paused' ? 'resume' : 'pause';
@@ -501,4 +510,40 @@ export function overridesView(s: MachineState): OverridesView {
     feedrate: ready ? pct(status?.feedrate) : null,
     spindleSpeed: ready ? pct(status?.spindle) : null,
   };
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Z probe — lib/cnc/probe.ts
+ * ---------------------------------------------------------------------------------------------- */
+
+export interface ProbeView {
+  /** Live probe input from the status report: null when unknown (not connected / no status). */
+  touching: boolean | null;
+  canProbe: ControlState;
+  canCancel: boolean;
+}
+
+/**
+ * Probing moves Z, so it needs: connected and ready, no job, controller Idle (FluidNC refuses
+ * motion in Alarm), no line awaiting its ok, no other Kinetiq operation, and the probe not already
+ * touching (G38.2 would fail with ALARM:4).
+ */
+export function probeView(s: MachineState): ProbeView {
+  const off = (reason: string): ControlState => ({ enabled: false, reason });
+  const running = s.probe.phase === 'running';
+  if (s.connection.phase !== 'open') return { touching: null, canProbe: off('Connect to a controller first'), canCancel: false };
+  const status = s.controller.state?.status;
+  const active = status?.activeState ?? '';
+  if (!active) return { touching: null, canProbe: off('Waiting for controller status'), canCancel: running };
+  const touching = !!status?.pinState && status.pinState.includes('P');
+  let canProbe: ControlState;
+  if (running) canProbe = off('Probing in progress');
+  else if (s.workflow !== 'idle') canProbe = off('Not available while a job is running or paused');
+  else if (active === 'Alarm') canProbe = off('Alarm — use Home or Unlock in the top bar first');
+  else if (active !== 'Idle') canProbe = off(`Not available while ${active}`);
+  else if (s.feeder?.pending) canProbe = off('Waiting for the previous command to be accepted');
+  else if (busyReason(s)) canProbe = off(busyReason(s)!);
+  else if (touching) canProbe = off('The probe reads as touching. Check the clip and plate before probing.');
+  else canProbe = { enabled: true };
+  return { touching, canProbe, canCancel: running };
 }

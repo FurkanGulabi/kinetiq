@@ -124,6 +124,7 @@ export default function VisualisationPanel() {
       if (gcode === lastGcode) return;
       lastGcode = gcode;
       clearTimeout(parseTimer);
+      scene.clearTrail(); // program loaded, replaced or unloaded
       if (!loaded || !gcode) {
         scene.setToolpath(null);
         setProgram(null);
@@ -143,17 +144,16 @@ export default function VisualisationPanel() {
       }, 0);
     };
 
-    // Passed lines: acknowledged by the controller while a job runs; all of them once it completed
-    // (the backend rewinds the Sender at the end, so received drops back to 0).
+    // Passed lines are greyed out only while a job runs (lines acknowledged so far). When the job
+    // completes or is stopped, the whole program is shown as remaining again.
+    // The tool trail is cleared when a job starts and when the program is loaded, replaced or
+    // unloaded, so a finished or removed job leaves nothing behind.
+    let prevWorkflow = getState().workflow;
     const updateProgress = () => {
       const s = getState();
-      const sender = s.sender;
-      let done: number | null = null;
-      if (s.program && sender) {
-        if (s.workflow !== 'idle') done = sender.received;
-        else if (sender.startTime > 0 && sender.finishTime > 0) done = sender.total;
-      }
-      scene.setProgramProgress(done);
+      if (prevWorkflow === 'idle' && s.workflow === 'running') scene.clearTrail();
+      prevWorkflow = s.workflow;
+      scene.setProgramProgress(s.program && s.sender && s.workflow !== 'idle' ? s.sender.received : null);
     };
 
     const onStore = () => {

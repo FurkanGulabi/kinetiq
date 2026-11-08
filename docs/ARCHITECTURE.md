@@ -326,6 +326,8 @@ Not shown yet: the machine travel envelope (FluidNC reports `$130-132` max trave
 | Gating | Enabled only when connected and ready, workflow idle, `activeState` Idle or Jog, and the Feeder is not pending. Otherwise all jog buttons are disabled and the reason appears under the controls ("Alarm — use Home or Unlock in the top bar first", "Jog is disabled while a job is running or paused", "Jog is not available while Hold"). Stop jog stays enabled whenever the controller is reporting, because status lags up to 250 ms and `0x85` is harmless when idle. |
 | Input mode | Pointer only in v1. Keyboard jogging is deliberately excluded (accidental-motion risk; not in scope). |
 
+**Go to zero** (under the jog pad): moves to work X0 Y0, and Z0 only when **Include Z** is checked. When Z is included, Z is raised to 0 first if the tool is below work zero, so the tool never travels diagonally through the stock. Hovering shows the planned move in the status line (in warn colour when Z is excluded and the tool is below zero).
+
 ### 10.5 Widget 4: Job Status
 
 Implemented in `src/components/job/` (`JobPanel`, `UploadDialog`, `RecentJobs`); state and gating in `derive.jobView()`; the library client in `src/lib/jobs/library.ts` (API: `API_REFERENCE.md` §7.4).

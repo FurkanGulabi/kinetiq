@@ -298,6 +298,7 @@ interface JobRun { status: 'completed' | 'cancelled' | 'error'; startedAt: numbe
 | Go to (one axis) | `command(port, 'gcode', '$J=G90 G21 X11 F1000', ctx)`: absolute jog in work coordinates at the jog feed |
 | Zero (one axis) | `command(port, 'gcode', 'G10 L20 P1 X0', ctx)`: P from the active WCS (G54 → 1 … G59 → 6), same as the CNCjs Axes widget |
 | Home (one axis) | `writeln(port, '$HX', ctx)`: FluidNC single-axis homing; direct write so it works from Alarm (the Feeder drops lines in Alarm) |
+| Go to zero | Jog pad button. `command(port, 'gcode', '$J=G90 G21 X0 Y0 F1000', ctx)`, plus `'$J=G90 G21 Z0 F1000'` when **Include Z** is checked (off by default, saved in `localStorage` `kinetiq.goZeroIncludeZ`). Order: Z below work zero → Z0 first, then X0 Y0; otherwise X0 Y0 first, then Z0. Both lines queue in the Feeder and run one after the other. Same gating as Go to; also disabled when already at zero. With Z excluded and the tool below zero, the preview warns that XY moves at that depth. |
 
 **Why `$J=` through `command('gcode')`:**
 1. The Feeder path waits for `ok` before each line and is **alarm-gated** (S3).

@@ -29,11 +29,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       <button
         ref={ref}
         type="button"
+        {...rest}
         disabled={disabled}
         title={showReason ? disabledReason : rest.title}
-        aria-describedby={showReason ? reasonId : undefined}
+        aria-describedby={showReason ? reasonId : rest['aria-describedby']}
         className={`pressable inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] whitespace-nowrap disabled:cursor-not-allowed ${VARIANTS[variant]} ${className}`}
-        {...rest}
       >
         {children}
       </button>

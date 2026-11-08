@@ -68,3 +68,19 @@ export function parseCoordinate(text: string): number | null {
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
 }
+
+/**
+ * "Go to zero": jog to work X0 Y0, and Z0 when `includeZ`. Returned as separate `$J=G90` lines that the
+ * Feeder sends in order (each queues behind the previous one in the planner):
+ *  - Z excluded → one XY move; Z does not move.
+ *  - Z included and the tool is below work Z0 → raise Z to 0 first, then XY (never drag through stock).
+ *  - Z included and the tool is at/above Z0 → XY first, then lower Z to 0.
+ */
+export function goToZeroLines(includeZ: boolean, currentZ: number | null, feed: number, units: Units): string[] {
+  const unitWord = units === 'in' ? 'G20' : 'G21';
+  const f = `F${trimNumber(feed)}`;
+  const xy = `$J=G90 ${unitWord} X0 Y0 ${f}`;
+  if (!includeZ) return [xy];
+  const z = `$J=G90 ${unitWord} Z0 ${f}`;
+  return currentZ !== null && currentZ < 0 ? [z, xy] : [xy, z];
+}

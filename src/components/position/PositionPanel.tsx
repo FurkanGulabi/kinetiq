@@ -6,19 +6,52 @@
  * Readout: work (primary) and machine (secondary) X/Y/Z from controller:state.
  * Per axis (AxisRow): Go to (absolute jog), Zero (G10 L20), Home ($H<axis>).
  * Jog: one `$J=` line per press through the CNCjs Feeder; centre button = jog cancel (0x85).
+ * Go to zero: `$J=G90` to work X0 Y0 (+ Z0 when "Include Z"; Z is raised first when below zero).
  * No optimistic state — the readout only changes when the controller reports a new position.
  */
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Square } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Crosshair, Square } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { sendCommand, sendGcode } from '@/lib/cnc/client';
-import { isValidFeed, JOG_FEEDS, JOG_STEPS, jogLine, MAX_JOG_FEED, type JogAxis, type Units } from '@/lib/cnc/commands';
+import {
+  goToZeroLines,
+  isValidFeed,
+  JOG_FEEDS,
+  JOG_STEPS,
+  jogLine,
+  MAX_JOG_FEED,
+  type JogAxis,
+  type Units,
+} from '@/lib/cnc/commands';
 import { axisControlsView, jogView, positionView, reportUnits } from '@/lib/cnc/derive';
 import { useMachine } from '@/lib/cnc/store';
+import { Button } from '@/components/ui/Button';
 import { Panel } from '@/components/ui/Panel';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { AxisRow } from './AxisRow';
 
 const PREFS_KEY = 'kinetiq.jog';
+const ZERO_Z_KEY = 'kinetiq.goZeroIncludeZ';
+
+/** "Include Z" for Go to zero; off by default so Z never moves unless asked. Persisted per browser. */
+function useIncludeZ(): [boolean, (value: boolean) => void] {
+  const [value, setValue] = useState(false);
+  useEffect(() => {
+    try {
+      setValue(localStorage.getItem(ZERO_Z_KEY) === '1');
+    } catch {
+      // optional
+    }
+  }, []);
+  const update = (next: boolean) => {
+    setValue(next);
+    try {
+      localStorage.setItem(ZERO_Z_KEY, next ? '1' : '0');
+    } catch {
+      // optional
+    }
+  };
+  return [value, update];
+}
 
 type JogPrefs = Record<Units, { step: number; feed: number }>;
 
@@ -116,6 +149,29 @@ export function PositionPanel() {
 
   useEffect(() => setFeedText(String(feed)), [feed]);
 
+  const [includeZ, setIncludeZ] = useIncludeZ();
+  const [zeroHover, setZeroHover] = useState(false);
+  const fmt = (v: number) => v.toFixed(decimals);
+  const work = Object.fromEntries(position.axes.map((a) => [a.axis, a.work])) as Record<JogAxis, number | null>;
+  const atZero =
+    work.X !== null && work.Y !== null && Math.abs(work.X) < 1e-4 && Math.abs(work.Y) < 1e-4 && (!includeZ || (work.Z !== null && Math.abs(work.Z) < 1e-4));
+  const zBelowZero = work.Z !== null && work.Z < 0;
+  const goZero = axisControls.goTo.enabled && !atZero ? { enabled: true } : { enabled: false, reason: atZero ? 'Already at work zero' : axisControls.goTo.reason };
+  let zeroPreview: string;
+  if (!includeZ) {
+    zeroPreview = `Move to X0 Y0 at ${feed} ${units}/min — Z stays at ${work.Z !== null ? fmt(work.Z) : '—'}`;
+    if (zBelowZero) zeroPreview += ' (below work zero: XY moves at this depth)';
+  } else {
+    zeroPreview = zBelowZero
+      ? `Raise Z to 0 first, then move to X0 Y0 at ${feed} ${units}/min`
+      : `Move to X0 Y0, then lower Z to 0 at ${feed} ${units}/min`;
+  }
+
+  const onGoZero = () => {
+    if (!goZero.enabled) return;
+    for (const line of goToZeroLines(includeZ, work.Z, feed, units)) sendGcode(line);
+  };
+
   const onJog = (axis: JogAxis, direction: 1 | -1) => {
     if (!jog.canJog) return;
     sendGcode(jogLine(axis, direction, step, feed, units));
@@ -202,6 +258,34 @@ export function PositionPanel() {
         </div>
       </div>
 
+      {/* Go to work zero */}
+      <div className="mt-4 flex items-center justify-center gap-4">
+        <Button
+          variant="secondary"
+          onClick={onGoZero}
+          disabled={!goZero.enabled}
+          disabledReason={goZero.reason}
+          onPointerEnter={() => setZeroHover(true)}
+          onPointerLeave={() => setZeroHover(false)}
+          onFocus={() => setZeroHover(true)}
+          onBlur={() => setZeroHover(false)}
+          title={goZero.enabled ? zeroPreview : undefined}
+          className="min-w-[132px]"
+        >
+          <Crosshair size={14} aria-hidden />
+          Go to zero
+        </Button>
+        <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink-2 select-none hover-fine:text-ink">
+          <input
+            type="checkbox"
+            checked={includeZ}
+            onChange={(e) => setIncludeZ(e.target.checked)}
+            className="h-4 w-4 cursor-pointer accent-accent"
+          />
+          Include Z
+        </label>
+      </div>
+
       <div className="mt-5 grid grid-cols-[44px_1fr] items-center gap-x-3 gap-y-2.5">
         <span className="panel-label">Step</span>
         <div className="flex items-center gap-2">
@@ -248,7 +332,13 @@ export function PositionPanel() {
       </div>
 
       <p role="status" className={`mt-4 text-[12px] ${jog.canJog ? 'text-ink-3' : 'text-ink-2'}`}>
-        {preview ? <span className="text-accent">{preview}</span> : jog.reason ?? `Each press moves ${step} ${units} at ${feed} ${units}/min.`}
+        {preview ? (
+          <span className="text-accent">{preview}</span>
+        ) : zeroHover && goZero.enabled ? (
+          <span className={!includeZ && zBelowZero ? 'text-warn' : 'text-accent'}>{zeroPreview}</span>
+        ) : (
+          jog.reason ?? `Each press moves ${step} ${units} at ${feed} ${units}/min.`
+        )}
       </p>
     </Panel>
   );

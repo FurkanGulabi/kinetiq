@@ -234,6 +234,8 @@ The backend exposes only `idle | running | paused`. Kinetiq derives six display 
 
 Completed and Cancelled can be rebuilt from server state after a page reload. Telling an error-triggered stop apart from a user stop needs client memory and is kept only for the session.
 
+**Observed backend quirk (2026-11-08, FluidNC v4.0.1):** in a short program the Sender sends the appended `%wait` line before the `error:N` reply arrives. `%wait` calls `Sender.hold({data:'%wait'})` (Sender hold only, workflow stays running), and `Sender.hold()` returns early when already held, so the later `workflow.pause({err:true})` reason is **dropped** and the job ends with `finishTime > 0`, which looks Completed. Kinetiq therefore also records `error:` lines that CNCjs forwards on `serialport:read` while the workflow is not idle (`store.jobErrors`, keyed by `sender.startTime`). Any recorded error makes the state **Error** (paused) or **Error · Finished with errors** (idle). The program text CNCjs prints in its `> line (ln=N)` echo is `lines[received-1]`, i.e. the *previous* line; only `ln` is shown. This memory is per session: after a reload such a run shows Completed.
+
 ### 7.3 Time and progress values: source and accuracy
 
 | Field | Source | Accuracy |
@@ -245,6 +247,30 @@ Completed and Cancelled can be rebuilt from server state after a page reload. Te
 | Completion % | `received / total × 100` | Acknowledged lines, not executed motion. It runs ahead of the tool by at most the RX buffer (~120 B) plus the planner queue. Line-based, not time-based. `total` includes the appended `%wait` line, so 100 % means "planner drained". |
 | Lines | `received` / `total` (`sent` shown as secondary) | Exact |
 | Hold reason | `sender.holdReason.msg` / `.data` | Exact |
+
+---
+
+### 7.4 Job library (Kinetiq HTTP API, `src/server/jobs.ts`)
+
+Uploaded programs and their recent-run history, served by the custom server next to the session endpoint. Loading onto the controller is still `gcode:load` (§7.1), with `context = { kinetiqJobId }` so every client (and a reloaded page) knows which library entry is loaded (`sender:status.context`, `gcode:load` 3rd argument).
+
+| Request | Response | Notes |
+|---|---|---|
+| `GET /api/kinetiq/jobs` | `JobRecord[]`, most recently used first | |
+| `POST /api/kinetiq/jobs?name=<file>` (body: G-code, `text/plain`) | `201 JobRecord` | Extensions `.nc .gcode .gc .ngc .tap .cnc .txt`; ≤ 50 MB; empty or binary (NUL) files rejected; name reduced to its basename. Same name + same SHA-256 reuses the existing record (history kept). |
+| `GET /api/kinetiq/jobs/<id>/gcode` | `text/plain` | |
+| `PATCH /api/kinetiq/jobs/<id>` (body `{ touch?: true, lastRun?: JobRun }`) | `JobRecord` | `touch` on load; `lastRun` written by the client when a run ends |
+| `DELETE /api/kinetiq/jobs/<id>` | `204` | Removes the record and file |
+
+```ts
+interface JobRecord { id: string /* 16 hex */; name: string; size: number; lines: number /* non-empty */;
+  sha256: string; uploadedAt: number; lastUsedAt: number; lastRun: JobRun | null }
+interface JobRun { status: 'completed' | 'cancelled' | 'error'; startedAt: number; endedAt: number }
+```
+
+- **Auth:** loopback `Host` (same DNS-rebinding check as the session endpoint) **and** `Authorization: Bearer <session JWT>`; otherwise `403`. The client refetches the token once on `403`.
+- **Storage:** `~/.kinetiq/jobs/<id>.nc` + `index.json` (dir `0700`, files `0600`; override `KINETIQ_JOBS_DIR`). Index writes are serialised and atomic (tmp + rename). The 50 most recently used jobs are kept; older files are deleted.
+- **Run outcome:** recorded by the browser when the workflow returns to idle: `completed` (finishTime set, no errors), `error` (an Error state or controller error was seen during the run), else `cancelled`. Best effort: a run that ends while no Kinetiq tab is open is not recorded.
 
 ---
 

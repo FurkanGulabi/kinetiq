@@ -16,7 +16,7 @@ export const SESSION_PATH = '/api/kinetiq/session';
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /** Rejects requests whose Host header is not a loopback name (DNS-rebinding defence). */
-function isLoopbackHost(hostHeader: string | undefined): boolean {
+export function isLoopbackHost(hostHeader: string | undefined): boolean {
   if (!hostHeader) {
     return false;
   }

@@ -309,7 +309,7 @@ At the user's request the Console panel was replaced by a live 3D view of the ma
 | States | "No position — connect to a controller" until a status report arrives; a message instead of the canvas if WebGL is unavailable. |
 | Loading | `three` is code-split with `next/dynamic` (`ssr: false`), so it loads only in the browser for this panel. |
 
-Implementation: `src/components/visualisation/MachineScene.ts` (imperative three.js) and `VisualisationPanel.tsx` (panel, controls, store subscription). Not shown yet: the machine travel envelope (FluidNC reports `$130-132` max travel, but the direction of travel from machine zero is not known from `$$` alone) and G-code toolpaths (future, with the Job widget).
+Implementation: `src/components/visualisation/MachineScene.ts` (imperative three.js) and `VisualisationPanel.tsx` (panel, controls, store subscription). Not shown yet: the machine travel envelope (FluidNC reports `$130-132` max travel, but the direction of travel from machine zero is not known from `$$` alone) and G-code toolpaths (next milestone: the loaded program's text is already in `store.program.gcode`).
 
 ### 10.4 Widget 3: Position and Jog
 
@@ -326,13 +326,20 @@ Implementation: `src/components/visualisation/MachineScene.ts` (imperative three
 
 ### 10.5 Widget 4: Job Status
 
+Implemented in `src/components/job/` (`JobPanel`, `UploadDialog`, `RecentJobs`); state and gating in `derive.jobView()`; the library client in `src/lib/jobs/library.ts` (API: `API_REFERENCE.md` §7.4).
+
 | Element | Behaviour |
 |---|---|
-| Header | `JOB`, plus the job `StatusBadge`: Idle (neutral ○), Running (accent ▶), Paused (warn ‖, with `holdReason.msg` such as "M0 program pause" or "Tool change T2" on a second line), Completed (ok ✓), Cancelled (neutral ■), Error (crit ▲, with the error message). |
-| Program | File name (truncated in the middle) and line count. Empty state: "No program loaded" + **Load…** (D4). |
-| Meter | Full-width `Meter`. The percentage is large on the right, with `received / total` lines under it. |
-| Stat row | `STARTED 14:02:11` · `ELAPSED 0:41:06` · `REMAINING ≈ 25 min` · `FINISHED 14:43:17 / —`. Each has a hover note on its source and accuracy (`API_REFERENCE.md` §7.3). Remaining shows "—" until it is available. |
-| Controls (D4) | **Start** (primary; when idle with a program loaded), **Pause** / **Resume**, **Stop** (danger; opens a confirmation dialog, then runs the safe stop sequence pause → Hold:0 → force stop, showing "Stopping…"). |
+| Header | `JOB`, plus the job `StatusBadge`: Idle (neutral ○), Running (accent ▶), Paused (warn ‖), Completed (ok ✓), Cancelled (neutral ■), Error (crit ▲), Stopping… (spinner). The hold or error reason sits in a strip under the program row ("M0 program pause · M0 (check pause)", "error:20 (Unsupported command) at line 2"). |
+| Program | File name (middle-truncated), line count and size; **Open…** (upload menu) and **×** (unload). Both need an idle workflow. |
+| Empty state | "No program loaded" + **Upload…** (primary), then the three most recent jobs with **Load**, and "View all (n)" when there are more. |
+| Meter | Full-width `Meter` (tone follows the state). Percentage large on the right, `received / total` under it. Completed shows 100 % (the backend rewinds the Sender); Cancelled keeps the progress last seen this session. |
+| Stat row | `STARTED` · `ELAPSED` · `REMAINING ≈ … (paused)` · `FINISHED`. Each has a hover note on its source and accuracy (`API_REFERENCE.md` §7.3). |
+| Controls (D4) | **Start** / **Run again** (primary; idle workflow, controller Idle, program loaded), **Pause** ↔ **Resume**, **Stop** (danger → `ConfirmDialog` → safe sequence: pause → wait for `Hold:0` → `gcode:stop {force:true}`; never forces during `Hold:1`; gives up after 15 s with a message). When Start is disabled its reason is shown at the left of the row. |
+
+**Upload menu** (`UploadDialog`, Radix Dialog): a drop zone (drop or click to browse; accepted extensions and the 50 MB limit are stated) above the full **Recent jobs** list. Dropping a file uploads it to the library, then loads it onto the controller and closes the dialog. If loading is not possible (disconnected, job running) the file is still saved and the dialog says why it was not loaded.
+
+**Recent jobs** (`RecentJobs`): name, lines · size, and the last run (✓ Completed / ■ Cancelled / ▲ Error, with a relative time, or "Never run"). The loaded job is marked **Loaded** instead of a Load button. The dialog adds a remove button per row.
 
 ### 10.6 Machine controls (top bar, D4)
 

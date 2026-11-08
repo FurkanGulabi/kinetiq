@@ -251,3 +251,184 @@ export function connectionErrorMessage(s: MachineState): string | null {
   }
   return `Could not open ${port}. Check that the cable is connected and that no other program is using the port.`;
 }
+
+/* ------------------------------------------------------------------------------------------------
+ * Job (Widget 4) — API_REFERENCE.md §7.2–7.3
+ * ---------------------------------------------------------------------------------------------- */
+
+export type JobStatus = 'idle' | 'running' | 'paused' | 'error' | 'completed' | 'cancelled';
+
+export interface JobView {
+  status: JobStatus;
+  label: string;
+  tone: MachineStateTone;
+  /** Hold reason (M0/M1/M6/%wait/error) shown under the badge. */
+  reason: string | null;
+  stopping: boolean;
+  stopFailure: string | null;
+  program: { name: string; lines: number; jobId: string | null } | null;
+  /** Acknowledged lines over total (total includes the backend's %wait line). */
+  progress: { received: number; sent: number; total: number; percent: number } | null;
+  startTime: number | null;
+  finishTime: number | null; // only when Completed — never predicted
+  elapsedMs: number | null;
+  remainingMs: number | null; // estimate, hidden until the backend has one
+  canLoad: ControlState;
+  canUnload: ControlState;
+  start: ControlState;
+  pauseMode: 'pause' | 'resume';
+  pause: ControlState;
+  stop: ControlState;
+}
+
+const JOB_STATUS: Record<JobStatus, { label: string; tone: MachineStateTone }> = {
+  idle: { label: 'Idle', tone: 'neutral' },
+  running: { label: 'Running', tone: 'accent' },
+  paused: { label: 'Paused', tone: 'warn' },
+  error: { label: 'Error', tone: 'crit' },
+  completed: { label: 'Completed', tone: 'ok' },
+  cancelled: { label: 'Cancelled', tone: 'neutral' },
+};
+
+/** Controller errors recorded for the current run (client memory; see store.jobErrors). */
+export function runErrors(s: MachineState): string[] {
+  const start = s.sender?.startTime;
+  return start && s.jobErrors?.startTime === start ? s.jobErrors.messages : [];
+}
+
+export function jobStatus(s: MachineState): JobStatus {
+  const sender = s.sender;
+  const active = s.controller.state?.status.activeState;
+  const errored = runErrors(s).length > 0;
+  if (s.workflow !== 'idle' && active === 'Alarm') return 'error';
+  if (s.workflow === 'running') return 'running';
+  if (s.workflow === 'paused') return sender?.holdReason?.err || errored ? 'error' : 'paused';
+  if (!s.program || !sender || !sender.startTime) return 'idle';
+  if (sender.finishTime > 0) return errored ? 'error' : 'completed';
+  return 'cancelled';
+}
+
+/** `now` is passed in so the elapsed clock stays a pure function of (state, time). */
+export function jobView(s: MachineState, now: number): JobView {
+  const status = jobStatus(s);
+  const sender = s.sender;
+  const open = s.connection.phase === 'open';
+  const active = s.controller.state?.status.activeState ?? '';
+  const subState = s.controller.state?.status.subState;
+  const stopping = s.stopSequence.phase === 'stopping';
+  const off = (reason: string): ControlState => ({ enabled: false, reason });
+  const on: ControlState = { enabled: true };
+
+  const program = s.program
+    ? {
+        name: s.program.name,
+        // The backend appends one "%wait" line; show the file's own line count.
+        lines: Math.max(0, (sender?.total ?? 0) - 1),
+        jobId: s.program.jobId,
+      }
+    : null;
+
+  const total = sender?.total ?? 0;
+  // The backend rewinds the Sender when the workflow stops, so a Completed job reports received = 0.
+  const finished = s.workflow === 'idle' && (sender?.finishTime ?? 0) > 0 && !!sender?.startTime;
+  const received = finished ? total : sender?.received ?? 0;
+  const progress =
+    s.program && sender && total > 0
+      ? {
+          received,
+          sent: finished ? total : sender.sent,
+          total,
+          percent: Math.min(100, (received / total) * 100),
+        }
+      : null;
+
+  const startTime = sender?.startTime || null;
+  const finishTime = finished ? sender?.finishTime || null : null;
+  let elapsedMs: number | null = null;
+  if (startTime) {
+    if (finishTime) elapsedMs = finishTime - startTime;
+    else if (s.workflow !== 'idle') elapsedMs = Math.max(0, now - startTime);
+  }
+  const remainingMs =
+    (status === 'running' || status === 'paused') && sender && sender.remainingTime > 0 ? sender.remainingTime : null;
+
+  let reason: string | null = null;
+  const errors = runErrors(s);
+  if (status === 'paused' || status === 'error') {
+    const hold = sender?.holdReason;
+    const label = hold?.data ? HOLD_LABELS[hold.data] ?? hold.data : null;
+    // msg is a %msg text or the original program line (e.g. "M0 (check pause)"); skip it for %wait.
+    const showMsg = hold?.msg && hold.msg !== hold.data && !hold.msg.startsWith('%');
+    reason = label ? (showMsg ? `${label} · ${hold?.msg}` : label) : hold?.msg || null;
+    if (status === 'error') {
+      if (active === 'Alarm' && s.workflow !== 'idle') reason = 'Controller entered Alarm during the job';
+      else if (errors.length > 0) {
+        const more = errors.length > 1 ? ` (+${errors.length - 1} more)` : '';
+        reason = `${s.workflow === 'idle' ? 'Finished with errors: ' : ''}${errors[0]}${more}`;
+      }
+    }
+    if (status === 'paused' && !reason) reason = 'Paused by operator';
+  }
+
+  // --- control gating ---
+  const ready = open && active !== '';
+  const notReady = open ? 'Waiting for controller status' : 'Connect to a controller first';
+  const jobBusy = 'Stop the current job first';
+
+  const canLoad = !ready ? off(notReady) : s.workflow !== 'idle' ? off(jobBusy) : stopping ? off('Stopping…') : on;
+  const canUnload = !s.program ? off('No program loaded') : !ready ? off(notReady) : s.workflow !== 'idle' ? off(jobBusy) : on;
+
+  let start: ControlState;
+  if (!ready) start = off(notReady);
+  else if (!s.program) start = off('Load a program first');
+  else if (s.workflow !== 'idle') start = off('The job is already running');
+  else if (active === 'Alarm') start = off('Alarm — use Home or Unlock in the top bar first');
+  else if (active !== 'Idle') start = off(`Cannot start while ${active}`);
+  else if (s.feeder?.pending) start = off('Waiting for the previous command to be accepted');
+  else start = on;
+
+  const pauseMode: 'pause' | 'resume' = s.workflow === 'paused' ? 'resume' : 'pause';
+  let pause: ControlState;
+  if (!ready) pause = off(notReady);
+  else if (stopping) pause = off('Stopping…');
+  else if (pauseMode === 'pause') pause = s.workflow === 'running' ? on : off('No job is running');
+  else if (active === 'Hold' && subState === 1) pause = off('Decelerating — wait for the hold to complete');
+  else if (active === 'Door' && subState === 1) pause = off('Door open — close it to resume');
+  else if (active === 'Alarm') pause = off('Alarm — stop the job, then Home or Unlock');
+  else pause = on;
+
+  const stop: ControlState = !ready
+    ? off(notReady)
+    : s.workflow === 'idle'
+      ? off('No job is running')
+      : stopping
+        ? off('Stopping…')
+        : on;
+
+  return {
+    status,
+    ...JOB_STATUS[status],
+    reason,
+    stopping,
+    stopFailure: s.stopSequence.phase === 'failed' ? s.stopSequence.message : null,
+    program,
+    progress,
+    startTime,
+    finishTime,
+    elapsedMs,
+    remainingMs,
+    canLoad,
+    canUnload,
+    start,
+    pauseMode,
+    pause,
+    stop,
+  };
+}
+
+const HOLD_LABELS: Record<string, string> = {
+  M0: 'M0 program pause',
+  M1: 'M1 optional stop',
+  M6: 'Tool change (M6)',
+  '%wait': 'Waiting for the planner to empty',
+};

@@ -132,6 +132,8 @@
 
 **Expected output:** a working Job widget and safety controls.
 
+**Progress (2026-11-08):** implemented, plus two user-requested additions: an **upload menu** (drop zone / file picker) and **recent jobs** backed by a server-side job library (`API_REFERENCE.md` §7.4). **Observed on FluidNC v4.0.1 with no-motion programs** (only `G4` dwells, `M0` and a bad `G999` line): Start → Running; `M0` → **Paused · M0 program pause**; Resume → Completed with an exact finish time and 100 %; Run again → Stop (confirm) → Stopping… → **Cancelled**, controller went `Hold:0` → soft reset → **Idle (not Alarm)**; `G999` → `error:20 (Unsupported command) at line 2` → **Error**, then "Finished with errors" (this needed a client-side workaround for a CNCjs hold-reason quirk, §7.2); Completed rebuilt correctly after a page reload; run outcomes written to recent jobs. **Not yet exercised:** an air-cut program with motion (Pause/Stop while moving, where Stop must wait for `Hold:0`).
+
 **Acceptance criteria**
 - With a short air-cut program (spindle off, Z raised), Start shows **Running**. The percentage rises with `received/total`, and elapsed counts every second.
 - Remaining appears after about 1 s marked "≈". Finished shows "—" until completion.
@@ -142,6 +144,12 @@
 - After a page reload, Completed and Cancelled are shown correctly from server state.
 - An injected bad line (`G999` in the program) pauses the job and shows **Error** with the decoded message.
 - Hold and Reset in the top bar work at any time while connected. Reset during motion produces the expected GRBL alarm, and the UI shows it.
+
+---
+
+## M5b: Toolpath in the Visualisation (next)
+
+Draw the loaded program (`store.program.gcode`) in the 3D view: rapids and feeds in distinct styles, the executed portion highlighted from `sender.received`, bounds shown and used by Fit.
 
 ---
 

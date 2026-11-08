@@ -7,7 +7,7 @@
  */
 import io, { type Socket } from 'socket.io-client';
 import { DEFAULT_BAUDRATE, type OpenOptions, type ServerEvents } from './protocol';
-import { getState, resetMachineState, setState } from './store';
+import { getState, resetMachineState, setState, subscribe } from './store';
 
 const SESSION_URL = '/api/kinetiq/session';
 const FIRMWARE_PATTERN = /FluidNC v(\d+(?:\.\d+)+[\w.-]*?)(?=[\s:\]]|$)/;
@@ -16,6 +16,7 @@ const PREFS_KEY = 'kinetiq.connection';
 let socket: Socket | null = null;
 let started = false;
 let tokenRetried = false;
+let sessionToken: string | null = null;
 
 /** Stable per-tab id, used as `context.__sender__` so the console can recognise its own echoes. */
 export const clientId = `kinetiq-${Math.random().toString(36).slice(2, 10)}`;
@@ -47,7 +48,18 @@ async function fetchToken(): Promise<string> {
     throw new Error(`Session request failed (${res.status})`);
   }
   const { token } = (await res.json()) as { token: string };
+  sessionToken = token;
   return token;
+}
+
+/** Session JWT for Kinetiq's own HTTP API (job library). Refetched once if missing. */
+export async function getSessionToken(): Promise<string> {
+  return sessionToken ?? fetchToken();
+}
+
+/** Drops the cached token so the next getSessionToken() mints a fresh one (e.g. after a 403). */
+export function invalidateSessionToken(): void {
+  sessionToken = null;
 }
 
 function on<E extends keyof ServerEvents>(event: E, handler: ServerEvents[E]): void {
@@ -162,10 +174,35 @@ export async function startClient(): Promise<void> {
     }));
   });
 
+  let lastProgramLine: string | null = null;
   on('serialport:read', (line) => {
-    const match = typeof line === 'string' ? FIRMWARE_PATTERN.exec(line) : null;
+    if (typeof line !== 'string') return;
+    const match = FIRMWARE_PATTERN.exec(line);
     if (match) {
       setState((s) => ({ ...s, controller: { ...s.controller, firmware: `FluidNC v${match[1]}` } }));
+      return;
+    }
+    // While a program runs, CNCjs forwards "> <line> (ln=N)" followed by "error:N (message)".
+    // Only ln is trusted: the quoted text is lines[received - 1], i.e. the previous line.
+    if (line.startsWith('> ')) {
+      const ln = /\(ln=(\d+)\)\s*$/.exec(line);
+      lastProgramLine = ln ? `line ${ln[1]}` : null;
+      return;
+    }
+    if (/^error:/i.test(line)) {
+      const s0 = getState();
+      const startTime = s0.sender?.startTime;
+      if (s0.workflow !== 'idle' && startTime) {
+        const message = lastProgramLine ? `${line} at ${lastProgramLine}` : line;
+        setState((s) => ({
+          ...s,
+          jobErrors:
+            s.jobErrors?.startTime === startTime
+              ? { startTime, messages: [...s.jobErrors.messages, message] }
+              : { startTime, messages: [message] },
+        }));
+      }
+      lastProgramLine = null;
     }
   });
 
@@ -180,7 +217,13 @@ export async function startClient(): Promise<void> {
   on('workflow:state', (workflow) => setState((s) => ({ ...s, workflow })));
   on('sender:status', (sender) => setState((s) => ({ ...s, sender })));
   on('feeder:status', (feeder) => setState((s) => ({ ...s, feeder })));
-  on('gcode:load', (name) => setState((s) => ({ ...s, program: { name } })));
+  on('gcode:load', (name, gcode, context) => {
+    const jobId = (context as { kinetiqJobId?: unknown } | null)?.kinetiqJobId;
+    setState((s) => ({
+      ...s,
+      program: { name, gcode: typeof gcode === 'string' ? gcode : '', jobId: typeof jobId === 'string' ? jobId : null },
+    }));
+  });
   on('gcode:unload', () => setState((s) => ({ ...s, program: null })));
 }
 
@@ -256,8 +299,10 @@ export type MachineCommand =
   | 'feedhold' // !
   | 'cyclestart' // ~
   | 'reset' // workflow stop + feeder reset + 0x18
+  | 'gcode:start' // workflow start + Sender.next()
   | 'gcode:pause' // workflow pause + !
   | 'gcode:resume' // ~ + workflow resume
+  | 'gcode:unload' // workflow stop + Sender.unload()
   | 'jogCancel'; // 0x85 real-time jog cancel
 
 export function sendCommand(cmd: MachineCommand): void {
@@ -296,4 +341,98 @@ export function sendLine(line: string): void {
 
 export function clearConnectionError(): void {
   setState((s) => ({ ...s, connection: { ...s.connection, error: null } }));
+}
+
+/**
+ * Load a program onto the controller (CNCjs `gcode:load`). The backend appends `%wait`, stops the
+ * workflow and replies with `gcode:load` to every attached socket. Callers check derive.jobView().canLoad.
+ */
+export function loadProgram(name: string, gcode: string, jobId: string | null): Promise<void> {
+  const { port, phase } = getState().connection;
+  if (!socket || !port || phase !== 'open') {
+    return Promise.reject(new Error('Not connected'));
+  }
+  const context = jobId ? { kinetiqJobId: jobId } : {};
+  return new Promise((resolve, reject) => {
+    socket?.emit('command', port, 'gcode:load', name, gcode, context, (err: unknown) => {
+      if (err) {
+        reject(new Error((err as { message?: string })?.message || 'The controller rejected this program'));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+const STOP_HOLD_TIMEOUT_MS = 15_000;
+const STOP_SETTLE_MS = 750; // three 250 ms status polls
+
+
+/**
+ * Safe Stop (API_REFERENCE §7.1): pause → wait for Hold:0 (motion has decelerated, position kept)
+ * → `gcode:stop {force:true}` (workflow stop, Sender rewind, soft reset while in Hold).
+ * Resetting during Hold:1 would lose position, so the sequence never forces before Hold completes.
+ */
+export function stopJob(): void {
+  const s0 = getState();
+  if (!socket || s0.connection.phase !== 'open' || s0.workflow === 'idle' || s0.stopSequence.phase === 'stopping') {
+    return;
+  }
+  const port = s0.connection.port;
+  const startedAt = Date.now();
+  setState((s) => ({ ...s, stopSequence: { phase: 'stopping', startedAt } }));
+  if (s0.workflow === 'running') {
+    sendCommand('gcode:pause');
+  }
+
+  let unsubscribe = () => {};
+  let done = false;
+  const finish = (failure?: string) => {
+    done = true;
+    clearTimeout(timer);
+    unsubscribe();
+    setState((s) => ({ ...s, stopSequence: failure ? { phase: 'failed', message: failure } : { phase: 'idle' } }));
+  };
+
+  const check = () => {
+    if (done) return;
+    const s = getState();
+    if (s.connection.phase !== 'open' || s.connection.port !== port) {
+      finish('Connection closed while stopping');
+      return;
+    }
+    if (s.workflow === 'idle') {
+      finish(); // already stopped (another client, reset, or completion)
+      return;
+    }
+    const status = s.controller.state?.status;
+    const active = status?.activeState;
+    const holdComplete = active === 'Hold' && status?.subState === 0;
+    // Idle/Alarm while paused: nothing to decelerate (e.g. M0 after a dwell). Trusted only after a few
+    // status ticks, so a report from before the pause took effect cannot trigger a reset mid-deceleration.
+    const settled = s.workflow === 'paused' && Date.now() - startedAt >= STOP_SETTLE_MS;
+    const stationary = settled && (active === 'Idle' || active === 'Alarm');
+    if (holdComplete || stationary || (active === 'Door' && status?.subState === 0)) {
+      socket?.emit('command', port, 'gcode:stop', { force: true });
+      finish();
+    }
+  };
+
+  const timer = setTimeout(
+    () => finish('The machine did not reach Hold within 15 s. Use Hold, then Reset if needed.'),
+    STOP_HOLD_TIMEOUT_MS,
+  );
+  unsubscribe = subscribe(check);
+  // Status may not change while waiting for the settle window, so re-check on a short timer too.
+  const poll = setInterval(check, 250);
+  const stopPolling = unsubscribe;
+  unsubscribe = () => {
+    clearInterval(poll);
+    stopPolling();
+  };
+  check();
+}
+
+export function clearStopFailure(): void {
+  setState((s) => (s.stopSequence.phase === 'failed' ? { ...s, stopSequence: { phase: 'idle' } } : s));
 }

@@ -1,4 +1,4 @@
-import { AlertTriangle, Circle, CircleDot, Loader2, Octagon, Play } from 'lucide-react';
+import { AlertTriangle, Check, Circle, CircleDot, Loader2, Octagon, Pause, Play, Square } from 'lucide-react';
 
 export type Tone = 'neutral' | 'ok' | 'warn' | 'crit' | 'accent';
 
@@ -15,6 +15,9 @@ const ICONS = {
   dot: CircleDot,
   busy: Loader2,
   play: Play,
+  pause: Pause,
+  check: Check,
+  stop: Square,
   warning: AlertTriangle,
   alarm: Octagon,
 } as const;

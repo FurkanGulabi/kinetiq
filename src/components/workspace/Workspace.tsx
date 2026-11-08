@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Single-page workspace. Milestone 1: top bar with the Connection widget, machine-state badge,
+ * Single-page workspace: top bar with the Connection widget, machine-state badge, machine controls,
  * backend-offline strip and connection errors; Position & Jog (left), Job and the live 3D Visualisation (right).
  */
 import { AlertTriangle, Octagon, X } from 'lucide-react';
@@ -13,7 +13,7 @@ import { useMachine } from '@/lib/cnc/store';
 import { ConnectionBar } from '@/components/connection/ConnectionBar';
 import { MachineControls } from '@/components/safety/MachineControls';
 import { PositionPanel } from '@/components/position/PositionPanel';
-import { Panel } from '@/components/ui/Panel';
+import { JobPanel } from '@/components/job/JobPanel';
 
 // three.js is loaded only in the browser and only for this panel.
 const VisualisationPanel = dynamic(() => import('@/components/visualisation/VisualisationPanel'), {
@@ -108,9 +108,7 @@ export function Workspace() {
       <main className="grid min-h-0 flex-1 grid-cols-[560px_1fr] gap-px bg-line">
         <PositionPanel />
         <div className="grid min-h-0 grid-rows-[auto_1fr] gap-px">
-          <Panel title="Job">
-            <p className="py-6 text-center text-[12px] text-ink-3">Job status arrives in a later milestone.</p>
-          </Panel>
+          <JobPanel />
           <VisualisationPanel />
         </div>
       </main>

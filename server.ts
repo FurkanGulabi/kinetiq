@@ -3,6 +3,7 @@
  *
  *   http.Server (127.0.0.1:8000)
  *    ├── GET /api/kinetiq/session → JWT for the Socket.IO handshake
+ *    ├── /api/kinetiq/jobs/*     → job library (uploaded G-code + recent runs)
  *    ├── /socket.io/*            → CNCjs CNCEngine (Socket.IO 2.2, unmodified)
  *    └── everything else         → Next.js
  *
@@ -24,6 +25,7 @@ async function main() {
   // Imported lazily so NODE_ENV above is in effect when CNCjs loads.
   const { loadCNCjs, closeAllControllers } = await import('./src/server/cncjs');
   const { handleSession, SESSION_PATH } = await import('./src/server/session');
+  const { handleJobs, JOBS_PATH } = await import('./src/server/jobs');
   const next = (await import('next')).default;
 
   const { settings, engine, store } = loadCNCjs();
@@ -36,6 +38,10 @@ async function main() {
 
     if (url.pathname === SESSION_PATH) {
       handleSession(req, res, settings);
+      return;
+    }
+    if (url.pathname === JOBS_PATH || url.pathname?.startsWith(`${JOBS_PATH}/`)) {
+      void handleJobs(req, res, settings);
       return;
     }
     // Socket.IO requests never reach this handler: Engine.IO (attached by CNCEngine) wraps the

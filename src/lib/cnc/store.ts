@@ -3,7 +3,7 @@
 /**
  * Kinetiq machine store: one immutable state object reduced from verified server events.
  * The server is the source of truth; the only client-side flags are `connection.phase === 'opening'`,
- * `connection.userRequestedClose` and (later) `stopSequence`. See docs/ARCHITECTURE.md §6–7.
+ * `connection.userRequestedClose` and `stopSequence`. See docs/ARCHITECTURE.md §6–7.
  */
 import { useSyncExternalStore } from 'react';
 import type {
@@ -45,8 +45,34 @@ export interface MachineState {
   workflow: WorkflowState;
   sender: SenderStatus | null;
   feeder: FeederStatus | null;
-  program: { name: string } | null;
+  /** Program loaded on the controller (`gcode:load`). `gcode` includes the backend's appended %wait line. */
+  program: LoadedProgram | null;
+  /** Client-side: the safe Stop sequence in progress (ARCHITECTURE §10.5). */
+  stopSequence: StopSequence;
+  /**
+   * Client-side: controller errors seen during the current run, keyed by `sender.startTime`.
+   * Needed because CNCjs drops the error hold reason when the Sender is already held by `%wait`
+   * (Sender.hold returns early), so a short program with a bad line would otherwise end "Completed".
+   */
+  jobErrors: JobErrors | null;
 }
+
+export interface JobErrors {
+  startTime: number;
+  messages: string[];
+}
+
+export interface LoadedProgram {
+  name: string;
+  gcode: string;
+  /** Job-library id passed in the `gcode:load` context, when the program came from the library. */
+  jobId: string | null;
+}
+
+export type StopSequence =
+  | { phase: 'idle' }
+  | { phase: 'stopping'; startedAt: number }
+  | { phase: 'failed'; message: string };
 
 const initialState: MachineState = {
   backend: 'connecting',
@@ -66,6 +92,8 @@ const initialState: MachineState = {
   sender: null,
   feeder: null,
   program: null,
+  stopSequence: { phase: 'idle' },
+  jobErrors: null,
 };
 
 let state: MachineState = initialState;
@@ -108,5 +136,7 @@ export function resetMachineState(prev: MachineState): MachineState {
     sender: null,
     feeder: null,
     program: null,
+    stopSequence: { phase: 'idle' },
+    jobErrors: null,
   };
 }

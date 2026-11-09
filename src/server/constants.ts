@@ -4,6 +4,8 @@
 
 /**
  * Globals the CNCjs macro language may reference inside `[expr]` / `%var=` (streaming expressions).
+ * SECURITY (Kinetiq): `Function` and `Object` (CNCjs had both) are left out: `Function("…")()` runs
+ * arbitrary code, and `Object` exposes prototype tools. See src/server/streaming/expressions.ts.
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects
  */
 export const GLOBAL_OBJECTS = {
@@ -12,8 +14,6 @@ export const GLOBAL_OBJECTS = {
   parseInt,
 
   // Fundamental objects
-  Object,
-  Function,
   Boolean,
 
   // Numbers and dates

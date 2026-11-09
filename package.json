@@ -22,7 +22,6 @@
     "@serialport/parser-readline": "^10.0.0",
     "chalk": "~4.1.1",
     "ensure-type": "^1.5.1",
-    "escodegen": "~1.11.1",
     "esprima": "~4.0.1",
     "gcode-parser": "^2.2.0",
     "jsonwebtoken": "^9.0.3",
@@ -45,7 +44,6 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.5",
-    "@types/escodegen": "^0.0.7",
     "@types/esprima": "^4.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/lodash": "^4.17.27",

@@ -14,9 +14,16 @@
  *
  * The port is line-by-line on purpose, including the quirks of the original (see the comments
  * marked "CNCjs quirk"), because G-code programs written for CNCjs rely on the exact behaviour.
+ *
+ * SECURITY (Kinetiq): G-code lines come from job files and the console, so an expression must never
+ * reach code execution. CNCjs's evaluator could: `posx.constructor.constructor("…")()` built a
+ * `Function` from any value, and a function expression was compiled with `Function()` itself. Kinetiq
+ * therefore (1) refuses `constructor`, `prototype` and every `__…` property (`isBlockedKey`), on reads
+ * and on assignment paths, (2) no longer evaluates function expressions, and (3) leaves `Function`
+ * and `Object` out of GLOBAL_OBJECTS (src/server/constants.ts). A blocked expression resolves to
+ * `undefined`, like any other unsupported expression. Do not relax these without a security review.
  */
 import _set from 'lodash/set';
-import { generate } from 'escodegen';
 import { parseScript } from 'esprima';
 import type * as ESTree from 'estree';
 import logger from '../logger';
@@ -40,12 +47,22 @@ const logEvaluate = logger('evaluate-expression');
 const UNRESOLVED = Symbol('unresolved');
 
 /**
+ * SECURITY (Kinetiq): property names an expression may not read or assign. `constructor` leads from
+ * any value to `Function` (code execution); `prototype` and the `__proto__` / `__defineGetter__` /
+ * `__lookupGetter__` family reach or rewrite shared prototypes.
+ */
+export const isBlockedKey = (key: unknown): boolean => {
+  if (typeof key === 'symbol') {
+    return true;
+  }
+  const name = String(key);
+  return name === 'constructor' || name === 'prototype' || name.startsWith('__');
+};
+
+/**
  * Evaluates an expression (source string or an already parsed ESTree node) against `context`.
  * Returns `undefined` when the expression cannot be resolved (unknown identifier, unsupported
  * node type) or throws (the error is logged).
- *
- * Note: `context` is used as-is when it is an object, so evaluating a function expression leaves
- * its parameter names set to `null` in the caller's object (CNCjs quirk).
  */
 export const evaluateExpression = (src: string | ESTree.Node, context?: unknown): unknown => {
   let vars = context as AnyObject;
@@ -225,11 +242,14 @@ export const evaluateExpression = (src: string | ESTree.Node, context?: unknown)
       // CNCjs quirk: an Identifier property is taken by name even when computed, so `a[b]` reads
       // `a.b` (not `a[<value of b>]`). Use `a["b"]` / `a[0]` / `a[b + 0]` style for dynamic access.
       if (node.property.type === 'Identifier') {
+        if (isBlockedKey(node.property.name)) {
+          return UNRESOLVED; // SECURITY (Kinetiq): see isBlockedKey
+        }
         return (obj as AnyObject)[node.property.name];
       }
       const prop = walk(node.property);
-      if (prop === UNRESOLVED) {
-        return UNRESOLVED;
+      if (prop === UNRESOLVED || isBlockedKey(prop)) {
+        return UNRESOLVED; // SECURITY (Kinetiq): see isBlockedKey
       }
       return (obj as AnyObject)[prop as PropertyKey];
     }
@@ -254,39 +274,11 @@ export const evaluateExpression = (src: string | ESTree.Node, context?: unknown)
       return walk(node.argument as ESTree.Expression);
     }
 
+    // SECURITY (Kinetiq): CNCjs compiled function expressions with `Function(…, 'return ' + generate(node))`,
+    // which runs the function body as real JavaScript with full access to the server (`process`).
+    // They are not evaluated any more; `(function () { … })` resolves to undefined.
     if (node.type === 'FunctionExpression') {
-      const bodies = node.body.body;
-
-      // Create a "scope" for our arguments
-      const oldVars: AnyObject = {};
-      Object.keys(vars).forEach(element => {
-        oldVars[element] = vars[element];
-      });
-
-      for (let i = 0; i < node.params.length; i++) {
-        const key = node.params[i];
-        if (key.type !== 'Identifier') {
-          return UNRESOLVED;
-        }
-
-        vars[key.name] = null;
-      }
-
-      for (const i in bodies) { // eslint-disable-line guard-for-in
-        if (walk((bodies as unknown as Record<string, ESTree.Statement>)[i]) === UNRESOLVED) {
-          return UNRESOLVED;
-        }
-      }
-
-      // restore the vars and scope after walk
-      vars = oldVars;
-
-      const keys = Object.keys(vars);
-      const vals = keys.map(key => {
-        return vars[key];
-      });
-
-      return Function(keys.join(', '), 'return ' + generate(node)).apply(null, vals); // eslint-disable-line no-new-func
+      return UNRESOLVED;
     }
 
     if (node.type === 'TemplateLiteral') {
@@ -413,7 +405,8 @@ const walkAssignmentExpression = (node: ESTree.AssignmentExpression, vars: unkno
 
   // CNCjs quirk: the operator is ignored, so `x += 1` behaves like `x = 1`.
   const path = lookupObjectPath(node.left, vars);
-  if (path) {
+  // SECURITY (Kinetiq): never assign through constructor / prototype / __proto__ (see isBlockedKey).
+  if (path && !path.some(isBlockedKey)) {
     const value = evaluateExpression(node.right, vars);
     _set(vars as object, path as PropertyKey[], value);
   }

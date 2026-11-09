@@ -71,16 +71,16 @@ export function ConnectionBar() {
       : undefined;
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-3">
+    <div className="-my-1 flex min-w-0 flex-1 items-center gap-3 overflow-hidden py-1">
       <StatusBadge tone={badge.tone} icon={badge.icon} label={view.label} />
       {view.status === 'connected' && view.detail ? (
         <StatusBadge tone="warn" icon="busy" label={view.detail} />
       ) : null}
 
-      <div className="flex min-w-0 items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         <Select
           ariaLabel="Serial port"
-          className="w-64"
+          className="w-64 shrink-0 max-[1439px]:w-52"
           value={activePort}
           onValueChange={setSelectedPort}
           options={portOptions}
@@ -99,7 +99,7 @@ export function ConnectionBar() {
         </Button>
         <Select
           ariaLabel="Baud rate"
-          className="w-28"
+          className="w-24 shrink-0"
           value={String(activeBaud)}
           onValueChange={(v) => setSelectedBaud(Number(v))}
           options={baudOptions}

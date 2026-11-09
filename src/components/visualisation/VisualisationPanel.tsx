@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * Live 3D machine view (replaces the Console panel). Positions come straight from the store via an
+ * Live 3D machine view, drawn full-window as the page background with a floating view toolbar
+ * (ARCHITECTURE §10.3). Positions come straight from the store via an
  * imperative subscription, so 4 Hz status updates never re-render React.
  */
 import { Crosshair, Eraser, Maximize2, Route, Spline } from 'lucide-react';
@@ -10,8 +11,8 @@ import * as THREE from 'three';
 import { reportUnits } from '@/lib/cnc/derive';
 import { getState, subscribe, type MachineState } from '@/lib/cnc/store';
 import { parseToolpath, type Toolpath } from '@/lib/gcode/toolpath';
-import { Panel } from '@/components/ui/Panel';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { EDGE, getWidgetRects, subscribeWidgetRects, TOOLBAR_SPACE, TOP_BAR } from '@/lib/ui/layout';
 import { MachineScene, type ScenePosition, type ViewPreset } from './MachineScene';
 
 function readPosition(s: MachineState): ScenePosition | null {
@@ -32,6 +33,39 @@ function readPosition(s: MachineState): ScenePosition | null {
     work: new THREE.Vector3(w[0], w[1], w[2]).multiplyScalar(scale),
     wco: new THREE.Vector3(wco[0], wco[1], wco[2]).multiplyScalar(scale),
   };
+}
+
+/**
+ * Screen insets covered by the top bar, the view toolbar and the open widgets. A widget counts
+ * towards the side its centre is on; collapsed widgets (header only) are ignored.
+ */
+function freeAreaInsets() {
+  const w = window.innerWidth;
+  let left = 0;
+  let right = 0;
+  for (const r of getWidgetRects()) {
+    if (r.height < 100) continue;
+    if (r.x + r.width / 2 < w / 2) left = Math.max(left, r.x + r.width);
+    else right = Math.max(right, w - r.x);
+  }
+  return { top: TOP_BAR, bottom: TOOLBAR_SPACE, left, right };
+}
+
+/**
+ * Horizontal offset that centres the view toolbar in the free part of the bottom band: widgets
+ * that reach down into it (and are open) push it towards the other side.
+ */
+function toolbarShift(): number {
+  const w = window.innerWidth;
+  const band = window.innerHeight - TOOLBAR_SPACE;
+  let left = 0;
+  let right = 0;
+  for (const r of getWidgetRects()) {
+    if (r.y + r.height <= band) continue;
+    if (r.x + r.width / 2 < w / 2) left = Math.max(left, r.x + r.width);
+    else right = Math.max(right, w - r.x);
+  }
+  return Math.round((left - right) / 2);
 }
 
 function samePosition(a: ScenePosition | null, b: ScenePosition | null): boolean {
@@ -57,8 +91,8 @@ function IconToggle({
       title={label}
       aria-pressed={pressed}
       onClick={onClick}
-      className={`pressable flex h-7 w-7 items-center justify-center rounded-md border ${
-        pressed ? 'border-accent bg-accent-track text-accent' : 'border-line bg-surface-2 text-ink-2 hover-fine:text-ink'
+      className={`pressable flex h-8 w-8 items-center justify-center rounded-lg border ${
+        pressed ? 'border-accent/50 bg-accent-track/70 text-accent' : 'border-transparent text-ink-2 hover-fine:bg-surface-2 hover-fine:text-ink'
       }`}
     >
       {children}
@@ -88,6 +122,8 @@ export default function VisualisationPanel() {
   const [program, setProgram] = useState<ProgramInfo | null>(null);
   const [showProgram, setShowProgram] = useState(true);
   const [showRapids, setShowRapids] = useState(true);
+  const [shift, setShift] = useState(0);
+  const [topShift, setTopShift] = useState(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -101,6 +137,23 @@ export default function VisualisationPanel() {
       return;
     }
     sceneRef.current = scene;
+    // Keep the free area current so the scene's own fits (first position, new program) frame
+    // the content beside the widgets, not under them.
+    scene.setFitInsets(freeAreaInsets());
+    // First framing waits for the widgets to report where they are.
+    let framed = false;
+    const onRects = () => {
+      scene.setFitInsets(freeAreaInsets());
+      setShift(toolbarShift());
+      const free = freeAreaInsets();
+      setTopShift(Math.round((free.left - free.right) / 2));
+      if (!framed && getWidgetRects().length > 0) {
+        framed = true;
+        requestAnimationFrame(() => scene.fit(280)); // wide when there is nothing to frame yet
+      }
+    };
+    const unsubscribeRects = subscribeWidgetRects(onRects);
+    onRects(); // the widgets may have mounted before this lazily loaded view
 
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     scene.setReducedMotion(motion.matches);
@@ -167,16 +220,25 @@ export default function VisualisationPanel() {
     return () => {
       clearTimeout(parseTimer);
       unsubscribe();
+      unsubscribeRects();
       motion.removeEventListener('change', onMotion);
       scene.dispose();
       sceneRef.current = null;
     };
   }, []);
 
+  /** Frame the content in the area the floating chrome leaves free. */
+  const fit = () => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    scene.setFitInsets(freeAreaInsets());
+    scene.fit();
+  };
+
   const changeView = (preset: ViewPreset) => {
     setView(preset);
     sceneRef.current?.setView(preset);
-    sceneRef.current?.fit(); // presets frame the content
+    fit(); // presets frame the content
   };
 
   const toggleFollow = () => {
@@ -186,11 +248,85 @@ export default function VisualisationPanel() {
   };
 
   return (
-    <Panel
-      title="Visualisation"
-      flush
-      actions={
-        <>
+    <>
+      {/* The scene is the page background: fixed, full window, under every other layer. */}
+      <div className="kq-scene-bg fixed inset-0 z-0">
+        <div ref={containerRef} className="absolute inset-0" aria-label="3D view of the machine position" role="img" />
+        {webglError ? (
+          <div className="absolute inset-0 flex items-center justify-center text-[12px] text-ink-3">
+            3D view unavailable: {webglError}
+          </div>
+        ) : null}
+        <div
+          className="pointer-events-none absolute bottom-4 left-4 flex flex-col items-start gap-1 text-[11px] text-ink-3"
+          style={{ textShadow: '0 1px 2px rgb(0 0 0 / 0.6)' }}
+        >
+          <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-accent" aria-hidden /> Tool
+          </span>
+          {program && showProgram ? (
+            <>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-0.5 w-3 bg-accent" aria-hidden /> Program
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-0.5 w-3 bg-[#5c626a]" aria-hidden /> Done
+              </span>
+              {showRapids ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-px w-3 bg-ink-3" aria-hidden /> Rapid
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-px w-3 bg-[#2f6a94]" aria-hidden /> Path
+            </span>
+          )}
+          </div>
+          <span>W0 work origin · M0 machine origin · grid 10 mm</span>
+        </div>
+      </div>
+
+      {!webglError && !hasPosition ? (
+        <div
+          className="kq-alert pointer-events-none fixed inset-x-0 z-[5] flex justify-center"
+          style={{ top: TOP_BAR + EDGE, translate: `${topShift}px 0` }}
+        >
+          <span className="glass rounded-full px-3 py-1 text-[12px] text-ink-2">No position — connect to a controller</span>
+        </div>
+      ) : null}
+
+      {/* View toolbar: floats at the bottom centre, above the scene and below the widgets. */}
+      <div
+        className="pointer-events-none fixed inset-x-0 bottom-3 z-[5] flex justify-center transition-transform duration-300 ease-[var(--ease-out-strong)] motion-reduce:transition-none"
+        style={{ transform: `translateX(${shift}px)` }}
+      >
+        <div
+          role="toolbar"
+          aria-label="3D view"
+          title="In the view: drag to orbit · right-drag to pan · scroll to zoom"
+          className="kq-float-body glass pointer-events-auto flex h-11 items-center gap-1.5 rounded-[14px] px-1.5"
+          style={{ ['--kq-stagger' as string]: '150ms' }}
+        >
+          {program && showProgram ? (
+            <>
+              <div className="flex max-w-[280px] min-w-0 flex-col justify-center px-2 leading-tight" title={[program.name, ...program.warnings].join('\n')}>
+                <span className="truncate text-[12px] text-ink">{program.name}</span>
+                <span className="truncate font-mono text-[10.5px] text-ink-3 tabular-nums">
+                  {program.size
+                    ? `${fmtMm(program.size[0])} × ${fmtMm(program.size[1])} × ${fmtMm(program.size[2])} mm`
+                    : program.segments > 0
+                      ? 'Rapid moves only'
+                      : 'Nothing to draw'}
+                  {program.units !== 'mm' ? ` · ${program.units === 'in' ? 'inch file' : 'mixed units'}` : ''}
+                  {program.warnings.length > 0 ? ` · ${program.warnings.length} note${program.warnings.length > 1 ? 's' : ''}` : ''}
+                </span>
+              </div>
+              <div className="mx-0.5 h-5 w-px bg-line" aria-hidden />
+            </>
+          ) : null}
           <div className="w-[168px]">
             <SegmentedControl
               ariaLabel="Camera view"
@@ -203,6 +339,7 @@ export default function VisualisationPanel() {
               onChange={changeView}
             />
           </div>
+          <div className="mx-0.5 h-5 w-px bg-line" aria-hidden />
           <IconToggle
             label={showProgram ? 'Hide program toolpath' : 'Show program toolpath'}
             pressed={showProgram}
@@ -229,76 +366,14 @@ export default function VisualisationPanel() {
           <IconToggle label="Follow tool" pressed={follow} onClick={toggleFollow}>
             <Crosshair size={14} aria-hidden />
           </IconToggle>
-          <IconToggle label="Fit to view" onClick={() => sceneRef.current?.fit()}>
+          <IconToggle label="Fit to view" onClick={fit}>
             <Maximize2 size={14} aria-hidden />
           </IconToggle>
           <IconToggle label="Clear path" onClick={() => sceneRef.current?.clearTrail()}>
             <Eraser size={14} aria-hidden />
           </IconToggle>
-        </>
-      }
-    >
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div ref={containerRef} className="absolute inset-0" aria-label="3D view of the machine position" role="img" />
-
-        {webglError ? (
-          <div className="absolute inset-0 flex items-center justify-center text-[12px] text-ink-3">
-            3D view unavailable: {webglError}
-          </div>
-        ) : !hasPosition ? (
-          <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
-            <span className="rounded-full border border-line bg-surface/90 px-3 py-1 text-[12px] text-ink-3">
-              No position — connect to a controller
-            </span>
-          </div>
-        ) : null}
-
-        {program && showProgram ? (
-          <div className="pointer-events-none absolute top-3 left-3 max-w-[60%] rounded-md border border-line bg-surface/90 px-3 py-2 text-[11px] text-ink-3">
-            <div className="truncate text-[12px] text-ink" title={program.name}>
-              {program.name}
-            </div>
-            <div className="font-mono tabular-nums">
-              {program.size
-                ? `${fmtMm(program.size[0])} × ${fmtMm(program.size[1])} × ${fmtMm(program.size[2])} mm (cut extents)`
-                : program.segments > 0
-                  ? 'Rapid moves only'
-                  : 'Nothing to draw'}
-              {program.units !== 'mm' ? ` · file in ${program.units === 'in' ? 'inches' : 'mixed units'}` : ''}
-            </div>
-            {program.warnings.length > 0 ? <div className="mt-0.5">{program.warnings.join(' · ')}</div> : null}
-          </div>
-        ) : null}
-
-        <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 text-[11px] text-ink-3">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 rounded-full bg-accent" aria-hidden /> Tool
-          </span>
-          {program && showProgram ? (
-            <>
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block h-0.5 w-3 bg-accent" aria-hidden /> Program
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block h-0.5 w-3 bg-[#5c626a]" aria-hidden /> Done
-              </span>
-              {showRapids ? (
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block h-px w-3 bg-ink-3" aria-hidden /> Rapid
-                </span>
-              ) : null}
-            </>
-          ) : (
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-px w-3 bg-[#2f6a94]" aria-hidden /> Path
-            </span>
-          )}
-          <span>W0 work origin · M0 machine origin · grid 10 mm</span>
-        </div>
-        <div className="pointer-events-none absolute right-3 bottom-3 text-[11px] text-ink-3">
-          Drag to orbit · right-drag to pan · scroll to zoom
         </div>
       </div>
-    </Panel>
+    </>
   );
 }

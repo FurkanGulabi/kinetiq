@@ -1,12 +1,20 @@
 'use client';
 
 /**
- * Single-page workspace: top bar with the Connection widget, machine-state badge, machine controls,
- * backend-offline strip and connection errors; Position & Jog (left), Job and the live 3D Visualisation (right).
+ * Single-page workspace (ARCHITECTURE §10.1). The live 3D view fills the window as the page
+ * background. Above it float, in glass: the fixed top bar (connection, machine state, Leveling,
+ * Settings, Reset layout, Hold/Reset), alert cards under it, the view toolbar, and the draggable,
+ * collapsible widgets Position & Jog, Job and Probe Z.
+ *
+ * Safety: the top bar never moves, never collapses and stays above every widget and sheet, so
+ * Hold and Reset are always one click away.
  */
-import { AlertTriangle, Octagon, X } from 'lucide-react';
+import { AlertTriangle, LayoutTemplate, Octagon, X } from 'lucide-react';
 import dynamic from 'next/dynamic';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { resetLayout, TOP_BAR } from '@/lib/ui/layout';
+import { Button } from '@/components/ui/Button';
+import { ProbeSection } from '@/components/position/ProbeSection';
 import { clearConnectionError, startClient } from '@/lib/cnc/client';
 import { connectionErrorMessage, machineStateView } from '@/lib/cnc/derive';
 import { useMachine } from '@/lib/cnc/store';
@@ -20,7 +28,7 @@ import { JobPanel } from '@/components/job/JobPanel';
 // three.js is loaded only in the browser and only for this panel.
 const VisualisationPanel = dynamic(() => import('@/components/visualisation/VisualisationPanel'), {
   ssr: false,
-  loading: () => <section aria-label="Visualisation" className="bg-surface" />,
+  loading: () => <div className="kq-scene-bg fixed inset-0 z-0" aria-hidden />,
 });
 import { StatusBadge, type BadgeIcon } from '@/components/ui/StatusBadge';
 
@@ -49,16 +57,29 @@ export function Workspace() {
     void startClient();
   }, []);
 
+  // Widgets read their remembered layout from localStorage, so they render on the client only.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const machine = useMachine((s) => s);
   const stateView = machineStateView(machine);
   const errorMessage = connectionErrorMessage(machine);
   const backendDown = machine.backend === 'offline';
 
   return (
-    <div className="flex h-full min-h-[720px] min-w-[1280px] flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-4 border-b border-line bg-surface px-4">
-        <Wordmark />
-        <div className="h-5 w-px bg-line" aria-hidden />
+    <div className="h-full overflow-hidden">
+      <VisualisationPanel />
+
+      <header
+        className="glass-bar fixed inset-x-0 top-0 z-40 flex items-center gap-4 px-4"
+        style={{ height: TOP_BAR }}
+      >
+        {/* Width budget: below 1440 px the wordmark goes and the connection fields narrow; below
+            1600 px Leveling and Settings are icon-only. Hold and Reset never shrink. */}
+        <span className="flex shrink-0 items-center gap-4 max-[1439px]:hidden">
+          <Wordmark />
+          <span className="h-5 w-px bg-line" aria-hidden />
+        </span>
         <ConnectionBar />
         {stateView ? (
           <StatusBadge
@@ -70,52 +91,66 @@ export function Workspace() {
         ) : null}
         <LevelingPanel />
         <SettingsPanel />
+        <Button
+          variant="ghost"
+          onClick={resetLayout}
+          title="Reset layout: put the widgets back in their default places"
+          aria-label="Reset layout"
+          className="w-8 px-0!"
+        >
+          <LayoutTemplate size={15} aria-hidden />
+        </Button>
         <MachineControls />
       </header>
 
-      {stateView?.label === 'Alarm' && !backendDown ? (
-        <div role="status" className="flex items-center gap-2 border-b border-line bg-surface px-4 py-2 text-[13px] text-ink-2">
-          <Octagon size={14} className="text-crit" aria-hidden />
-          <span>
-            Controller is in <span className="text-ink">Alarm</span>. Motion is blocked until you{' '}
-            <span className="text-ink">Home</span> ($H) or <span className="text-ink">Unlock</span> ($X). Reset alone
-            does not clear an alarm when homing is enabled.
-          </span>
-        </div>
-      ) : null}
+      {/* Alert cards hang from the top bar, above widgets; the alarm card cannot be dismissed. */}
+      <div
+        className="pointer-events-none fixed inset-x-0 z-[35] flex flex-col items-center gap-2 px-4"
+        style={{ top: TOP_BAR + 8 }}
+      >
+        {stateView?.label === 'Alarm' && !backendDown ? (
+          <div role="status" className="kq-alert glass pointer-events-auto flex max-w-[760px] items-center gap-2.5 px-4 py-2.5 text-[13px] text-ink-2">
+            <Octagon size={15} className="shrink-0 text-crit" aria-hidden />
+            <span>
+              Controller is in <span className="text-ink">Alarm</span>. Motion is blocked until you{' '}
+              <span className="text-ink">Home</span> ($H) or <span className="text-ink">Unlock</span> ($X). Reset alone
+              does not clear an alarm when homing is enabled.
+            </span>
+          </div>
+        ) : null}
 
-      {backendDown ? (
-        <div role="alert" className="flex items-center gap-2 border-b border-crit/40 bg-crit/10 px-4 py-2 text-[13px] text-ink">
-          <AlertTriangle size={14} className="text-crit" aria-hidden />
-          <span>
-            {machine.backendError ?? 'Kinetiq server unreachable'} — machine state unknown. Reconnecting…
-          </span>
-        </div>
-      ) : null}
+        {backendDown ? (
+          <div role="alert" className="kq-alert glass pointer-events-auto flex max-w-[760px] items-center gap-2.5 border-crit/50 px-4 py-2.5 text-[13px] text-ink">
+            <AlertTriangle size={15} className="shrink-0 text-crit" aria-hidden />
+            <span>
+              {machine.backendError ?? 'Kinetiq server unreachable'} — machine state unknown. Reconnecting…
+            </span>
+          </div>
+        ) : null}
 
-      {errorMessage && !backendDown ? (
-        <div role="alert" className="flex items-center gap-2 border-b border-line bg-surface px-4 py-2 text-[13px] text-ink">
-          <AlertTriangle size={14} className="text-crit" aria-hidden />
-          <span className="flex-1">{errorMessage}</span>
-          <button
-            type="button"
-            onClick={clearConnectionError}
-            className="pressable rounded p-1 text-ink-3 hover-fine:text-ink"
-            aria-label="Dismiss"
-          >
-            <X size={14} aria-hidden />
-          </button>
-        </div>
-      ) : null}
+        {errorMessage && !backendDown ? (
+          <div role="alert" className="kq-alert glass pointer-events-auto flex max-w-[760px] items-center gap-2.5 py-2 pr-2 pl-4 text-[13px] text-ink">
+            <AlertTriangle size={15} className="shrink-0 text-crit" aria-hidden />
+            <span className="flex-1">{errorMessage}</span>
+            <button
+              type="button"
+              onClick={clearConnectionError}
+              className="pressable rounded-md p-1.5 text-ink-3 hover-fine:bg-surface-2 hover-fine:text-ink"
+              aria-label="Dismiss"
+            >
+              <X size={14} aria-hidden />
+            </button>
+          </div>
+        ) : null}
+      </div>
 
-      {/* 1 px gaps let --bg show through as hairlines between flat panels (ARCHITECTURE §10.1). */}
-      <main className="grid min-h-0 flex-1 grid-cols-[560px_1fr] gap-px bg-line">
-        <PositionPanel />
-        <div className="grid min-h-0 grid-rows-[auto_1fr] gap-px">
+      {mounted ? (
+        <>
+          <PositionPanel />
           <JobPanel />
-          <VisualisationPanel />
-        </div>
-      </main>
+          <ProbeSection />
+        </>
+      ) : null}
     </div>
   );
 }

@@ -182,14 +182,18 @@ export class MachineScene {
   private lastFrameTime = 0;
   private disposed = false;
   private programVisible = true;
+  /** Screen area covered by floating chrome, in px; fit() frames content in what is left. */
+  private insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
   constructor(private container: HTMLElement) {
     const { clientWidth: w, clientHeight: h } = container;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Transparent canvas: the page background (a soft radial gradient) shows through, so the
+    // glass widgets above have some depth to blur.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h);
-    this.renderer.setClearColor(COLORS.background);
+    this.renderer.setClearColor(COLORS.background, 0);
     this.renderer.domElement.style.display = 'block';
     container.appendChild(this.renderer.domElement);
 
@@ -382,8 +386,16 @@ export class MachineScene {
     this.requestRender();
   }
 
-  /** Frame the work origin, the tool, the recorded path and the loaded program. */
-  fit(): void {
+  /** Screen area covered by floating chrome (top bar, widgets, toolbar), used by fit(). */
+  setFitInsets(insets: { top: number; right: number; bottom: number; left: number }): void {
+    this.insets = insets;
+  }
+
+  /**
+   * Frame the work origin, the tool, the recorded path and the loaded program in the part of the
+   * view that the floating widgets leave free (the canvas itself covers the whole window).
+   */
+  fit(minSize = 60): void {
     const box = new THREE.Box3().setFromPoints([new THREE.Vector3(0, 0, 0)]);
     if (this.displayed) box.expandByPoint(this.displayed);
     if (this.programBounds && this.programVisible) box.union(this.programBounds);
@@ -393,11 +405,35 @@ export class MachineScene {
       );
     }
     const center = box.getCenter(new THREE.Vector3());
-    const size = Math.max(box.getSize(new THREE.Vector3()).length(), 60);
-    const distance = size / (2 * Math.tan((this.camera.fov * Math.PI) / 360)) * 1.1;
+    const size = Math.max(box.getSize(new THREE.Vector3()).length(), minSize);
+
+    const w = this.container.clientWidth || 1;
+    const h = this.container.clientHeight || 1;
+    const { top, right, bottom, left } = this.insets;
+    // Never frame into a sliver: keep at least 35 % of each dimension.
+    const freeW = Math.max(w - left - right, w * 0.35);
+    const freeH = Math.max(h - top - bottom, h * 0.35);
+    const freeLeft = Math.min(left, w - freeW);
+    const freeTop = Math.min(top, h - freeH);
+
+    const tanHalf = Math.tan((this.camera.fov * Math.PI) / 360);
+    // The content (size × 1.1) must fit the smaller free dimension, in pixels.
+    const distance = (size * 1.1 * h) / (2 * tanHalf * Math.min(freeW, freeH));
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
-    this.controls.target.copy(center);
     this.camera.position.copy(center).add(dir.multiplyScalar(distance));
+    this.camera.lookAt(center);
+    this.camera.updateMatrixWorld();
+
+    // Shift so the content's centre lands in the middle of the free area.
+    const shiftX = freeLeft + freeW / 2 - w / 2; // px, + = right
+    const shiftY = freeTop + freeH / 2 - h / 2; // px, + = down
+    const worldPerPx = (2 * distance * tanHalf) / h;
+    const camRight = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    const camUp = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+    const offset = camRight.multiplyScalar(-shiftX * worldPerPx).add(camUp.multiplyScalar(shiftY * worldPerPx));
+
+    this.controls.target.copy(center).add(offset);
+    this.camera.position.add(offset);
     this.controls.update();
     this.requestRender();
   }

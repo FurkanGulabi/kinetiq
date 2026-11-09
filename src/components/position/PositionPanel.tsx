@@ -7,7 +7,8 @@
  * Per axis (AxisRow): Go to (absolute jog), Zero (G10 L20), Home ($H<axis>).
  * Jog: one `$J=` line per press through the CNCjs Feeder; centre button = jog cancel (0x85).
  * Go to zero: `$J=G90` to work X0 Y0 (+ Z0 when "Include Z"; Z is raised first when below zero).
- * Probe Z (ProbeSection): touch-plate probing that sets work Z0 at the stock surface.
+ * Floating, draggable, collapsible (FloatingWidget); collapsed, the header shows work X/Y/Z.
+ * Probe Z is its own widget (ProbeSection).
  * No optimistic state — the readout only changes when the controller reports a new position.
  */
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Crosshair, Square } from 'lucide-react';
@@ -26,10 +27,9 @@ import {
 import { axisControlsView, jogView, positionView, reportUnits } from '@/lib/cnc/derive';
 import { useMachine } from '@/lib/cnc/store';
 import { Button } from '@/components/ui/Button';
-import { Panel } from '@/components/ui/Panel';
+import { FloatingWidget } from '@/components/ui/FloatingWidget';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { AxisRow } from './AxisRow';
-import { ProbeSection } from './ProbeSection';
 
 const PREFS_KEY = 'kinetiq.jog';
 const ZERO_Z_KEY = 'kinetiq.goZeroIncludeZ';
@@ -189,12 +189,22 @@ export function PositionPanel() {
   const arrow = 14;
 
   return (
-    <Panel
-      className="overflow-y-auto"
+    <FloatingWidget
+      id="position"
+      index={0}
       title="Position"
       actions={
         <span className="font-mono">
           {position.wcs} · {units}
+        </span>
+      }
+      summary={
+        <span className="flex gap-3 font-mono tabular-nums">
+          {position.axes.map((a) => (
+            <span key={a.axis}>
+              <span className="text-ink-3">{a.axis}</span> <span className="text-ink">{a.work === null ? '—' : fmt(a.work)}</span>
+            </span>
+          ))}
         </span>
       }
     >
@@ -343,8 +353,6 @@ export function PositionPanel() {
           jog.reason ?? `Each press moves ${step} ${units} at ${feed} ${units}/min.`
         )}
       </p>
-
-      <ProbeSection />
-    </Panel>
+    </FloatingWidget>
   );
 }

@@ -31,6 +31,7 @@
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
 
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @layer base {
@@ -95,6 +96,205 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--color-ink-3);
+  }
+}
+
+/*
+ * Glass material (ARCHITECTURE §9.5). The 3D scene is the page background; chrome floats above it.
+ * Weight encodes hierarchy (apple-design §12): the top bar is the lightest strip, widgets are
+ * medium, sheets are the heaviest. Inside glass, the inner surfaces turn translucent and the
+ * tertiary ink is lifted so small labels stay legible over a moving background.
+ */
+@layer components {
+  .glass,
+  .glass-bar,
+  .glass-sheet {
+    --color-surface: rgb(255 255 255 / 0.035);
+    --color-surface-2: rgb(255 255 255 / 0.055);
+    --color-line: rgb(255 255 255 / 0.09);
+    --color-ink-3: #848b94;
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    backdrop-filter: blur(20px) saturate(150%);
+  }
+  .glass {
+    background: rgb(20 22 26 / 0.64);
+    border: 1px solid rgb(255 255 255 / 0.08);
+    border-radius: 14px;
+    /* Bright top edge = light catching the material, then a soft lift off the scene. */
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.06),
+      0 2px 6px rgb(0 0 0 / 0.28),
+      0 16px 40px -12px rgb(0 0 0 / 0.55);
+  }
+  .glass-bar {
+    background: rgb(16 18 21 / 0.58);
+    border-bottom: 1px solid rgb(255 255 255 / 0.07);
+    box-shadow: 0 8px 24px -16px rgb(0 0 0 / 0.6);
+  }
+  .glass-sheet {
+    /* Big surfaces read thicker: stronger blur, denser fill, deeper shadow. Sticky headers inside
+       an editor use --color-surface, so it stays nearly opaque here. */
+    --color-surface: rgb(22 24 28 / 0.94);
+    background: rgb(18 20 24 / 0.8);
+    -webkit-backdrop-filter: blur(28px) saturate(140%);
+    backdrop-filter: blur(28px) saturate(140%);
+    border: 1px solid rgb(255 255 255 / 0.09);
+    border-radius: 16px;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.07),
+      0 32px 80px -16px rgb(0 0 0 / 0.7);
+  }
+
+  /* Page background behind the transparent 3D canvas: a soft pool of light where the work sits. */
+  .kq-scene-bg {
+    background:
+      radial-gradient(120% 90% at 50% 42%, #1a1d22 0%, #121417 45%, #0a0b0d 100%);
+  }
+
+  /* Floating widget: outer element carries the position (transform, set from JS); the glass body
+     carries entrance and lift, so the two never fight over one transform. */
+  .kq-float {
+    position: fixed;
+    top: 0;
+    left: 0;
+    will-change: transform;
+  }
+  .kq-float-body {
+    transition:
+      transform 180ms var(--ease-out-strong),
+      box-shadow 180ms var(--ease-out-strong);
+    animation: kq-materialize 320ms var(--ease-out-strong) backwards;
+    animation-delay: var(--kq-stagger, 0ms);
+  }
+  .kq-float[data-dragging='true'] .kq-float-body {
+    transform: scale(1.012);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.08),
+      0 4px 10px rgb(0 0 0 / 0.3),
+      0 28px 60px -12px rgb(0 0 0 / 0.65);
+  }
+  .kq-drag-handle {
+    cursor: grab;
+    touch-action: none;
+  }
+  .kq-float[data-dragging='true'] .kq-drag-handle {
+    cursor: grabbing;
+  }
+
+  /* Collapse: rows 1fr ↔ 0fr keeps the content's natural height without measuring it. The content
+     fades and softens slightly as it folds (blur bridges the two states, emil-design-eng). */
+  .kq-collapse {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 240ms var(--ease-out-strong);
+  }
+  .kq-collapse[data-collapsed='true'] {
+    grid-template-rows: 0fr;
+  }
+  .kq-collapse > .kq-collapse-inner {
+    min-height: 0;
+    overflow: hidden;
+    transition:
+      opacity 200ms ease,
+      filter 200ms ease;
+  }
+  .kq-collapse[data-collapsed='true'] > .kq-collapse-inner {
+    opacity: 0;
+    filter: blur(3px);
+  }
+  .kq-chevron {
+    transition: transform 240ms var(--ease-out-strong);
+  }
+  [data-collapsed='true'] .kq-chevron {
+    transform: rotate(-90deg);
+  }
+  /* Summary shown in the header only while collapsed. */
+  .kq-summary {
+    transition:
+      opacity 200ms ease,
+      transform 240ms var(--ease-out-strong);
+  }
+  [data-collapsed='false'] .kq-summary {
+    opacity: 0;
+    transform: translateY(4px);
+    pointer-events: none;
+  }
+
+  /* Sheets (Settings, Leveling) materialize: blur + scale + opacity together. */
+  .kq-sheet[data-state='open'] {
+    animation: kq-materialize 260ms var(--ease-out-strong);
+  }
+  .kq-scrim[data-state='open'] {
+    animation: kq-fade-in 200ms ease-out;
+  }
+
+  /* Alert cards under the top bar slide down from it (same path in and out). */
+  .kq-alert {
+    animation: kq-drop-in 240ms var(--ease-out-strong);
+  }
+}
+
+@keyframes kq-materialize {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+    filter: blur(6px);
+  }
+}
+@keyframes kq-drop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kq-float-body,
+  .kq-sheet[data-state='open'] {
+    animation: kq-fade-in 200ms ease-out backwards;
+  }
+  .kq-float[data-dragging='true'] .kq-float-body {
+    transform: none;
+  }
+  .kq-alert {
+    animation: kq-fade-in 200ms ease-out;
+  }
+  .kq-collapse,
+  .kq-chevron,
+  .kq-summary {
+    transition-duration: 0ms;
+  }
+  .kq-collapse > .kq-collapse-inner {
+    transition: opacity 160ms ease;
+    filter: none !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-bar,
+  .glass-sheet {
+    --color-surface: #15171a;
+    --color-surface-2: #1c1f23;
+    --color-line: #262a2f;
+    background: #15171a;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .glass,
+  .glass-bar,
+  .glass-sheet {
+    --color-surface: #15171a;
+    --color-surface-2: #24282d;
+    --color-line: #6b727b;
+    --color-ink-3: #a1a7af;
+    background: #15171a;
+    border-color: #6b727b;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 

@@ -5,6 +5,8 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Dev-only badge: bottom-left holds the 3D legend, so keep it out of the way.
+  devIndicators: { position: 'bottom-right' },
 };
 
 export default nextConfig;

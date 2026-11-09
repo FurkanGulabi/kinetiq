@@ -7,6 +7,7 @@
  */
 import io, { type Socket } from 'socket.io-client';
 import { DEFAULT_BAUDRATE, type OpenOptions, type ServerEvents } from './protocol';
+import { consoleRead, consoleWrite } from './console-store';
 import { getState, resetMachineState, setState, subscribe, type ProgramLeveling } from './store';
 
 const SESSION_URL = '/api/kinetiq/session';
@@ -177,6 +178,7 @@ export async function startClient(): Promise<void> {
   let lastProgramLine: string | null = null;
   on('serialport:read', (line) => {
     if (typeof line !== 'string') return;
+    consoleRead(line);
     lineListeners.forEach((listener) => listener(line));
     const match = FIRMWARE_PATTERN.exec(line);
     if (match) {
@@ -205,6 +207,11 @@ export async function startClient(): Promise<void> {
       }
       lastProgramLine = null;
     }
+  });
+
+  on('serialport:write', (data, context) => {
+    if (typeof data !== 'string') return;
+    consoleWrite(data, typeof context?.__sender__ === 'string' ? context.__sender__ : undefined, clientId);
   });
 
   on('controller:state', (type, controllerState) => {

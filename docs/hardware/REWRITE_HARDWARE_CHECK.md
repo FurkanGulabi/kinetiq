@@ -32,5 +32,5 @@ Open http://127.0.0.1:8000. Keep a hand on the e-stop.
 
 ## Afterwards
 
-- All rows pass: merge `refactor/typescript-backend` into `main` (fast-forward is possible: the branch already contains `main`) and mark phase 6 done in `docs/BACKEND_REWRITE_PLAN.md`.
+- The branch was merged to `main` on 2026-11-10 before rows 2–9 ran. When all rows pass, mark phase 6 done in `docs/BACKEND_REWRITE_PLAN.md`. If one fails, `git checkout js-backend-final` gives the last JavaScript backend to compare against.
 - If 4 or 5 misbehave, the cause is most likely the `0xC2` prefix on extended real-time bytes. It is the same in the JavaScript backend, so compare against `main` before changing it.

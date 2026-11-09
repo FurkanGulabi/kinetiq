@@ -57,10 +57,10 @@ export interface CNCBackend {
  */
 export function loadBackend(): CNCBackend {
   // Required lazily so NODE_ENV (set in server.ts) is in effect when these modules evaluate.
-  const settings: CNCSettings = require('./cnc/config/settings').default;
-  const config: ConfigStore = require('./cnc/services/configstore').default;
-  const { setLevel } = require('./cnc/lib/logger') as { setLevel(level: string): void };
-  const store: ImmutableStore = require('./cnc/store').default;
+  const settings: CNCSettings = require('./config/settings').default;
+  const config: ConfigStore = require('./config/ConfigStore').default;
+  const { setLevel } = require('./logger') as { setLevel(level: string): void };
+  const store: ImmutableStore = require('./store').default;
   const CNCEngine: new () => CNCEngineInstance = require('./cnc/services/cncengine/CNCEngine').default;
 
   setLevel(process.env.KINETIQ_LOG_LEVEL || 'info');

@@ -4,9 +4,9 @@ import {
 } from 'ensure-type';
 import * as gcodeParser from 'gcode-parser';
 import _ from 'lodash';
-import EventTrigger from '../../lib/EventTrigger';
+import EventTrigger from '../../../events/EventTrigger';
 import Feeder from '../../lib/Feeder';
-import MessageSlot from '../../lib/MessageSlot';
+import MessageSlot from '../../../streaming/MessageSlot';
 import Sender, { SP_TYPE_CHAR_COUNTING } from '../../lib/Sender';
 import SerialConnection from '../../lib/SerialConnection';
 import Workflow, {
@@ -14,14 +14,13 @@ import Workflow, {
   WORKFLOW_STATE_PAUSED,
   WORKFLOW_STATE_RUNNING
 } from '../../lib/Workflow';
-import delay from '../../lib/delay';
-import evaluateAssignmentExpression from '../../lib/evaluate-assignment-expression';
-import x from '../../lib/json-stringify';
-import logger from '../../lib/logger';
-import translateExpression from '../../lib/translate-expression';
-import config from '../../services/configstore';
-import taskRunner from '../../services/taskrunner';
-import store from '../../store';
+import delay from '../../../util/delay';
+import x from '../../../util/jsonStringify';
+import logger from '../../../logger';
+import { evaluateAssignmentExpression, translateExpression } from '../../../streaming/expressions';
+import config from '../../../config/ConfigStore';
+import taskRunner from '../../../events/TaskRunner';
+import store from '../../../store';
 import {
   GLOBAL_OBJECTS as globalObjects,
   // Builtin Commands
@@ -31,8 +30,7 @@ import {
   WRITE_SOURCE_CLIENT,
   WRITE_SOURCE_FEEDER
 } from '../../../constants';
-import * as builtinCommand from '../utils/builtin-command';
-import { isM0, isM1, isM6, replaceM6 } from '../utils/gcode';
+import { isM0, isM1, isM6, matchBuiltinCommand, replaceM6 } from '../../../streaming/builtins';
 import GrblRunner from './GrblRunner';
 import {
   GRBL,
@@ -42,7 +40,7 @@ import {
   GRBL_ALARMS,
   GRBL_ERRORS,
   GRBL_SETTINGS,
-} from './constants';
+} from '../../../grbl/constants';
 
 const log = logger('controller:Grbl');
 const noop = _.noop;
@@ -211,7 +209,7 @@ class GrblController {
           context = this.populateContext(context);
 
           if (line[0] === '%') {
-            const [command, commandArgs] = ensureArray(builtinCommand.match(line));
+            const [command, commandArgs] = ensureArray(matchBuiltinCommand(line));
 
             // %msg
             if (command === BUILTIN_COMMAND_MSG) {
@@ -334,7 +332,7 @@ class GrblController {
           context = this.populateContext(context);
 
           if (line[0] === '%') {
-            const [command, commandArgs] = ensureArray(builtinCommand.match(line));
+            const [command, commandArgs] = ensureArray(matchBuiltinCommand(line));
 
             // %msg
             if (command === BUILTIN_COMMAND_MSG) {

@@ -1,6 +1,6 @@
 # Backend rewrite plan: CNCjs JavaScript → modular TypeScript
 
-Status: branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). **Phase 0 done** (protocol types, recorder, baseline). **Phase 1 done** (removals; bugs 1 and 2 of §3a fixed).
+Status: branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). **Phase 0 done** (protocol types, recorder, baseline). **Phase 1 done** (removals; bugs 1 and 2 of §3a fixed). **Phase 2 done** (leaf modules in TypeScript; bug 5 of §3a found).
 
 ## 1. Why
 
@@ -44,6 +44,8 @@ Found while typing the protocol (`src/server/protocol.ts`). Fixing them changes 
 2. **Fixed in phase 1.** **Reopen does not unload a leftover program.** `GrblController.js` calls `this.command('unload')` on open, but the handler is `gcode:unload`; the server logs "Unknown command: unload" and the old program stays loaded. Fix: call `gcode:unload`.
 3. **`%wait` typed in the console holds the Sender, not the Feeder** (`GrblController.js`, Feeder `dataFilter`). Ported as-is; revisit in phase 3.
 4. **Extended real-time bytes go out UTF-8 encoded.** `write()` takes a JS string, so jog cancel reaches the port as `0xC2 0x85` and every feed/spindle override as `0xC2 0x9X` (visible in `baseline/02-jog.trace` and `05-overrides.trace`). Check how FluidNC handles the `0xC2` prefix before changing it; a TS backend writing raw single bytes shows up as a protocol diff and must be accepted deliberately (re-record the baseline) only after a hardware check of jog cancel and overrides.
+
+5. **The macro-language sandbox can run arbitrary code (inherited from CNCjs, open).** `streaming/expressions.ts` evaluates `[expr]` / `%var=` from any G-code line (job files, console, `%` lines). Member access is not restricted, so `posx.constructor.constructor("…")()` builds a `Function` and reaches `process` — verified with a harmless `typeof process` payload. `Function` and `Object` are also in `GLOBAL_OBJECTS`. A malicious G-code file could therefore execute code on the server. Phase 2 ported this unchanged. Fix needs a decision (block `constructor` / `prototype` / `__proto__` access and drop `Function`/`Object` from the globals, or remove the macro language).
 
 ## 4. Verification without tests: protocol diff
 

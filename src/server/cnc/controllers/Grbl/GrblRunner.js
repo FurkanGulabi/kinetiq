@@ -1,20 +1,20 @@
 import events from 'events';
 import _ from 'lodash';
-import decimalPlaces from '../../lib/decimal-places';
-import GrblLineParser from './GrblLineParser';
-import GrblLineParserResultStatus from './GrblLineParserResultStatus';
-import GrblLineParserResultOk from './GrblLineParserResultOk';
-import GrblLineParserResultError from './GrblLineParserResultError';
-import GrblLineParserResultAlarm from './GrblLineParserResultAlarm';
-import GrblLineParserResultParserState from './GrblLineParserResultParserState';
-import GrblLineParserResultParameters from './GrblLineParserResultParameters';
-import GrblLineParserResultFeedback from './GrblLineParserResultFeedback';
-import GrblLineParserResultSettings from './GrblLineParserResultSettings';
-import GrblLineParserResultStartup from './GrblLineParserResultStartup';
+import decimalPlaces from '../../../util/decimalPlaces';
+import GrblLineParser from '../../../grbl/parser/GrblLineParser';
+import GrblLineParserResultStatus from '../../../grbl/parser/GrblLineParserResultStatus';
+import GrblLineParserResultOk from '../../../grbl/parser/GrblLineParserResultOk';
+import GrblLineParserResultError from '../../../grbl/parser/GrblLineParserResultError';
+import GrblLineParserResultAlarm from '../../../grbl/parser/GrblLineParserResultAlarm';
+import GrblLineParserResultParserState from '../../../grbl/parser/GrblLineParserResultParserState';
+import GrblLineParserResultParameters from '../../../grbl/parser/GrblLineParserResultParameters';
+import GrblLineParserResultFeedback from '../../../grbl/parser/GrblLineParserResultFeedback';
+import GrblLineParserResultSettings from '../../../grbl/parser/GrblLineParserResultSettings';
+import GrblLineParserResultStartup from '../../../grbl/parser/GrblLineParserResultStartup';
 import {
   GRBL_ACTIVE_STATE_IDLE,
   GRBL_ACTIVE_STATE_ALARM
-} from './constants';
+} from '../../../grbl/constants';
 
 class GrblRunner extends events.EventEmitter {
     state = {

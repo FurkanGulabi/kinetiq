@@ -1,8 +1,8 @@
 import { ensureArray } from 'ensure-type';
 import _ from 'lodash';
 import rangeCheck from 'range_check';
-import settings from './config/settings';
-import config from './services/configstore';
+import settings from '../config/settings';
+import config from '../config/ConfigStore';
 
 const whitelist = [
   // IPv4 reserved space

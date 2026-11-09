@@ -3,14 +3,14 @@ import noop from 'lodash/noop';
 import { SerialPort } from 'serialport';
 import socketIO from 'socket.io';
 import socketioJwt from 'socketio-jwt';
-import EventTrigger from '../../lib/EventTrigger';
-import logger from '../../lib/logger';
-import settings from '../../config/settings';
-import store from '../../store';
-import config from '../configstore';
-import taskRunner from '../taskrunner';
+import EventTrigger from '../../../events/EventTrigger';
+import logger from '../../../logger';
+import settings from '../../../config/settings';
+import store from '../../../store';
+import config from '../../../config/ConfigStore';
+import taskRunner from '../../../events/TaskRunner';
 import GrblController from '../../controllers/Grbl/GrblController';
-import { GRBL } from '../../controllers/Grbl/constants';
+import { GRBL } from '../../../grbl/constants';
 import {
   authorizeIPAddress,
   validateUser

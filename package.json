@@ -10,6 +10,8 @@
     "dev": "tsx watch --clear-screen=false --exclude ./src/app --exclude ./src/components --exclude ./src/lib server.ts",
     "build": "next build && tsc -p tsconfig.server.json",
     "start": "NODE_ENV=production node dist/server.js",
+    "fake-controller": "python3 scripts/fake-controller.py",
+    "dev:fake": "KINETIQ_RC=\"${TMPDIR:-/tmp}/kinetiq-fake.rc\" npm run dev",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {

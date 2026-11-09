@@ -28,6 +28,15 @@ npm run build && npm start
 
 Kinetiq listens on `http://127.0.0.1:8000`. Override with `KINETIQ_PORT` / `KINETIQ_HOST`. Configuration lives in `~/.kinetiqrc` (override with `KINETIQ_RC`).
 
+No machine at hand? Run a fake FluidNC controller on a pseudo-terminal (macOS / Linux, Python 3):
+
+```bash
+npm run fake-controller   # terminal 1
+npm run dev:fake          # terminal 2, then pick "kinetiq-fake0" and Connect
+```
+
+See [`docs/FAKE_CONTROLLER.md`](docs/FAKE_CONTROLLER.md).
+
 ## Documentation
 
 See [`docs/`](docs): CNCjs analysis, backend integration, architecture and design system, API reference, implementation plan.

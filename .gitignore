@@ -4,3 +4,6 @@ dist/
 next-env.d.ts
 *.tsbuildinfo
 .DS_Store
+
+# Python bytecode (scripts/fake-controller.py)
+__pycache__/

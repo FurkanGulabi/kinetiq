@@ -96,6 +96,19 @@ export function busyReason(s: MachineState): string | null {
 }
 
 /**
+ * Console input (API_REFERENCE §6.3). Lines go out with `writeln` (direct, not queued), so `$X`,
+ * `$H` and `?` work in Alarm. Blocked while a job runs or is paused (hazard H1: an extra `ok` would
+ * desynchronise the Sender's character counting) and while a Kinetiq sequence owns the port.
+ */
+export function consoleView(s: MachineState): ControlState {
+  if (s.connection.phase !== 'open') return { enabled: false, reason: 'Connect to a controller first' };
+  if (s.workflow !== 'idle') return { enabled: false, reason: 'Not available while a job is running or paused' };
+  const busy = busyReason(s);
+  if (busy) return { enabled: false, reason: busy };
+  return { enabled: true };
+}
+
+/**
  * Machine settings editor (docs/SETTINGS_EDITOR.md §4.5, §6): reading the FluidNC config needs a
  * connected controller in Idle or Alarm with no job running, and one operation at a time.
  */

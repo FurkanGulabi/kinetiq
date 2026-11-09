@@ -77,7 +77,7 @@ new-cnc-app/
     │   │   ├── protocol.ts      typed event maps, mirroring API_REFERENCE.md §2–4
     │   │   ├── client.ts        socket singleton: connect(token), list, open, close, command, writeln
     │   │   ├── store.ts         machine store + useMachine(selector)
-    │   │   ├── console-store.ts ring buffer (2,000 lines) + useConsole()
+    │   │   ├── console-store.ts ring buffer (2,000 lines), per-frame batching + useConsole()
     │   │   ├── derive.ts        pure: connectionStatus, jobStatus, canJog, canSend, jobTimes, units
     │   │   └── commands.ts      jogLine(axis, dir, step, feed, units), stopSequence()
     │   └── format.ts            coordinates, durations, clock times, percentages
@@ -88,7 +88,7 @@ new-cnc-app/
         ├── safety/SafetyControls.tsx (Feed Hold, Reset; D4)
         ├── position/PositionPanel.tsx  readout + JogPad + JogSettings
         ├── job/JobPanel.tsx            state, meter, stat row, controls (D4)
-        └── console/ConsolePanel.tsx    log list + input
+        └── console/ConsoleWidget.tsx   log list + input (floating widget, §10.8)
 ```
 
 **Import boundary (safety-relevant):** nothing under `src/app`, `src/components` or `src/lib` may import `src/server/**`. This keeps serialport and CNCEngine out of Next's bundles and HMR, so the process can never hold two engines or two handles on the port.
@@ -104,7 +104,7 @@ new-cnc-app/
 | `lib/cnc/store.ts` | Reduces server events into one immutable `MachineState`. Holds client flags: `connecting`, `userRequestedClose`, `stopSequence`. | client |
 | `lib/cnc/derive.ts` | Pure functions from `MachineState` to UI state (connection, job, guards, times). **All gating rules live here.** | — |
 | `ConnectionBar` | Widget 1 | store, client |
-| `ConsolePanel` | Widget 2 | console-store, client |
+| `ConsoleWidget` | §10.8 | console-store, client |
 | `PositionPanel` | Widget 3 | store, client |
 | `JobPanel` | Widget 4 | store, client |
 | `SafetyControls` | Hold, resume and reset (D4) | store, client |
@@ -376,8 +376,22 @@ Order, at the far right of the top bar: **Home · Unlock │ Hold/Resume · Rese
 ### 10.7 Empty, disconnected and edge states
 
 - **Backend offline:** a full-width crit strip under the top bar, and all controls disabled.
-- **Disconnected:** readouts show "—", jog is disabled, and the console shows its history greyed with an input placeholder of "Connect to send commands".
+- **Disconnected:** readouts show "—", jog is disabled, and the console keeps its history with the input disabled (placeholder "Connect to a controller first").
 - **Alarm:** the header badge shows `◆ ALARM`, the Position panel shows the unlock hint, and the latest `ALARM:` line is pinned at the top of the console until the state clears.
+
+### 10.8 Console (floating widget, 2026-11-09)
+
+The deferred M3 console returns as a fifth floating widget (480 px). It starts collapsed, in the right column above Probe Z, and grows upward when opened. Collapsed, its header shows the newest line that is not `ok`, coloured by class.
+
+| Element | Behaviour |
+|---|---|
+| Source | `serialport:read` (incoming) and `serialport:write` (outgoing, echoed by the server to every tab with the sender's `__sender__`). Nothing is echoed locally, so there are no duplicates, and a command typed in another tab appears in every tab. Status polling is written without an echo and its replies are only forwarded when a user sent `?` / `$G`. |
+| Store | `console-store.ts`: ring buffer of 2,000 entries; appends are batched per animation frame (a timer in background tabs), so a `$$` burst costs one render. The list re-renders only when its lines change. |
+| Rows (API_REFERENCE §6.1) | Writes: `›` in accent for this tab; writes from another tab or from Kinetiq's server-side sequences (settings) carry an `OTHER TAB` / `KINETIQ` tag. `error:` rows red on a tinted band, `ALARM:` bolder; `[MSG:]` with an info / warn / error glyph and colour; `ok` small and dim; `$n=v (description, units)` as the backend formats it; `> line (ln=N)` italic. Timestamps on hover. |
+| Follow | The list follows the newest line until the user scrolls up; then a **Jump to latest · n** pill counts what arrived. Sending a command returns to the bottom. |
+| Pinned alarm | While the controller is in Alarm, the latest `ALARM:` line stays pinned at the top of the list. |
+| Input | Enter sends with `writeln` (direct, not queued, so `$X`, `$H`, `?` work in Alarm). ↑/↓ walk this tab's last 50 commands (session storage), Esc clears. Disabled with the reason as placeholder when not connected, while a job runs or is paused (hazard H1) and while a Kinetiq sequence (probe, height map, settings) owns the port (`derive.consoleView`). A note under the input says lines run immediately, motion included. |
+| Clear | Clears this tab's view only. |
 
 ---
 

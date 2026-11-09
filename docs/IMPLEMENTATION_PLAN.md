@@ -77,6 +77,8 @@
 ## M3: Console
 
 > **Changed 2026-11-08:** at the user's request the Console panel was replaced by a live 3D Visualisation (see `ARCHITECTURE.md` §10.3). The console tasks below are deferred.
+>
+> **Done 2026-11-09:** implemented as a floating widget (`ARCHITECTURE.md` §10.8). All acceptance criteria below were checked in a browser against the fake controller (`docs/FAKE_CONTROLLER.md`), including the second tab; not yet against hardware.
 
 | | |
 |---|---|

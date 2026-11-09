@@ -389,6 +389,9 @@ def handle_line(raw):
     code = re.sub(r'\(.*?\)|;.*$', '', upper)
     wd = words(code)
     gs = re.findall(r'G(\d+(?:\.\d+)?)', code)
+    unsupported = [g for g in gs if g.strip('0') != '' and g.lstrip('0') not in SUPPORTED_G]
+    if unsupported:
+        return 'error:20'  # unsupported or invalid g-code command
     with lock:
         if S['state'] == 'Alarm' and (wd.keys() & set('XYZ')):
             return 'error:9'
@@ -437,10 +440,16 @@ def handle_line(raw):
         time.sleep(min(wd['P'], 5))
         return 'ok'
     if wd.keys() & set('XYZ') and not ('28' in gs or '30' in gs or '92' in gs):
-        rapid = '0' in gs
+        rapid = any(g.strip('0') == '' for g in gs)  # G0 / G00
         machine = '53' in gs
         enqueue(target(wd, S['absolute'] and not machine, machine), RAPID if rapid else (S['feed'] or 500))
     return 'ok'
+
+
+# G-codes GRBL 1.1 / FluidNC accept (others answer error:20).
+SUPPORTED_G = {'1', '2', '3', '4', '10', '17', '18', '19', '20', '21', '28', '28.1', '30', '30.1', '38.2', '38.3',
+               '38.4', '38.5', '40', '43.1', '49', '53', '54', '55', '56', '57', '58', '59', '61', '80', '90', '90.1',
+               '91', '91.1', '92', '92.1', '93', '94'}
 
 
 # --- threads ---------------------------------------------------------------------------------------

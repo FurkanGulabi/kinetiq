@@ -33,7 +33,7 @@ Options (`npm run fake-controller -- --help`):
 | --- | --- |
 | Status | `?` → `<State\|MPos\|FS\|WCO\|Ov>`; states Idle, Run, Jog, Hold:0, Home, Alarm |
 | Info | `$I` (FluidNC v4.0.1 (fake)), `$G`, `$#` (G54 and PRB), `$$` |
-| Motion | G0/G1 (G2/G3 as straight lines), G90/G91, G53, F, M3/M5, G4 dwell. A queue of 12 moves stands in for the planner: `ok` is held while it is full, so the Sender streams as it would to real hardware |
+| Motion | G0/G1 (G2/G3 as straight lines), G90/G91, G53, F, M3/M5, G4 dwell; G-codes GRBL does not know (`G999`) → `error:20`. A queue of 12 moves stands in for the planner: `ok` is held while it is full, so the Sender streams as it would to real hardware |
 | Work zero | `G10 L20 P1 X… Y… Z…` after the queued moves finish |
 | Jog | `$J=` (relative, absolute, G53); jog cancel `0x85`; Feed hold cancels a jog |
 | Realtime | `!` hold, `~` resume, `Ctrl-X` reset (clears the queue and prints the banner), feed/rapid/spindle overrides |

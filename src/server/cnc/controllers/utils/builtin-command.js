@@ -2,7 +2,7 @@ import { ensureString } from 'ensure-type';
 import {
   BUILTIN_COMMAND_MSG,
   BUILTIN_COMMAND_WAIT,
-} from '../constants';
+} from '../../../constants';
 
 export const match = (line) => {
   // Strip anything after a semi-colon to the end of the line

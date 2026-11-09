@@ -30,7 +30,7 @@ import {
   // Write Source
   WRITE_SOURCE_CLIENT,
   WRITE_SOURCE_FEEDER
-} from '../constants';
+} from '../../../constants';
 import * as builtinCommand from '../utils/builtin-command';
 import { isM0, isM1, isM6, replaceM6 } from '../utils/gcode';
 import GrblRunner from './GrblRunner';

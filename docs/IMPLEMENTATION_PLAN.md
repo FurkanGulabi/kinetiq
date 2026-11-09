@@ -31,7 +31,7 @@
 
 **Tasks**
 1. Build the CNCjs server once: `yarn install` in `CNCJS-fork/`, then run only the server part of the build. That is `babel -d dist/cncjs/server src/server`, copying `src/package.json` to `dist/cncjs/`, and copying `src/server/{i18n,views}`. This writes the git-ignored `dist/` only; **no source changes**.
-2. Scaffold `new-cnc-app` with Next.js (App Router, TS), Tailwind v4 and `name: "kinetiq"`. Add dependencies: `cncjs-app` (file:), `socket.io-client@2`, `jsonwebtoken`, `@radix-ui/react-select`, `@radix-ui/react-dialog`, `lucide-react`. Dev dependencies: `typescript`, `tsx`, `@types/*`.
+2. Scaffold the app (now the `kinetiq/` folder) with Next.js (App Router, TS), Tailwind v4 and `name: "kinetiq"`. Add dependencies: `cncjs-app` (file:), `socket.io-client@2`, `jsonwebtoken`, `@radix-ui/react-select`, `@radix-ui/react-dialog`, `lucide-react`. Dev dependencies: `typescript`, `tsx`, `@types/*`.
 3. `server.ts` + `src/server/cncjs.ts`, following the boot order in `BACKEND_INTEGRATION.md` §5.1: rc file `~/.kinetiqrc`, secret, `new CNCEngine().start(server, 'Grbl')`, listen on `127.0.0.1:8000`, and fail fast if the build is missing.
 4. `src/server/session.ts`: `GET /api/kinetiq/session` with a Host-header check.
 5. `lib/cnc/protocol.ts` (typed events from `API_REFERENCE.md`), `client.ts`, `store.ts`, and `derive.connectionStatus`.

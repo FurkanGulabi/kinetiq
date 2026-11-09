@@ -51,10 +51,10 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 
 ---
 
-## 4. Directory structure (`new-cnc-app/`)
+## 4. Directory structure (`kinetiq/`)
 
 ```
-new-cnc-app/
+kinetiq/
 ├── package.json                 name: "kinetiq"; scripts: dev / build / start
 ├── server.ts                    custom server: http.Server + Next handler + CNCEngine + session + shutdown
 ├── tsconfig.json                app (Next)

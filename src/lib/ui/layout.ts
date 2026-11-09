@@ -41,7 +41,7 @@ export const TOOLBAR_SPACE = 64;
 
 export const WIDGET_WIDTH: Record<WidgetId, number> = {
   position: 560,
-  job: 440,
+  job: 480,
   probe: 400,
 };
 

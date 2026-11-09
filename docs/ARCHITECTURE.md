@@ -272,7 +272,7 @@ At the user's request the 3D view became the page background and every other reg
 > **Changed 2026-11-09:** the fixed grid of flat panels was replaced by a full-window 3D view with floating glass widgets (user request). The earlier grid layout is in the git history.
 
 ```
-┌ glass top bar (fixed): KINETIQ │ connection │ ◉ STATE │ Leveling Settings Layout │ Home Unlock │ Hold Reset ┐
+┌ glass top bar (fixed): KINETIQ │ connection │ ◉ STATE │ Leveling Settings ⊞ │ Home Unlock │ Hold Reset ┐
 │ ┌ POSITION ───── G54 · mm ┐       (alert cards hang here)          ┌ JOB ─────────── ● Running ┐       │
 │ │ readout, go to, jog,    │                                         │ program, progress, controls│       │
 │ │ step / feed             │        3D VIEW = page background        └────────────────────────────┘       │
@@ -283,7 +283,7 @@ At the user's request the 3D view became the page background and every other reg
 ```
 
 - **Layers (back to front):** 3D view (z 0) → status chip and view toolbar (z 5) → widgets (z 10–12, last touched on top) → sheets and their scrim (z 30) → alert cards (z 35) → top bar (z 40) → dialogs (z 40–50).
-- **Widgets:** Position & Jog (560 px), Job (440 px), Probe Z (400 px; split out of the Position panel). Fixed widths. Default slots: Position top-left, Job top-right, Probe Z bottom-right and collapsed (it grows upward when opened). Position, collapsed state and stacking order are remembered per browser (`localStorage` `kinetiq.layout.v1`); **Layout** in the top bar glides them back to their default slots.
+- **Widgets:** Position & Jog (560 px), Job (480 px), Probe Z (400 px; split out of the Position panel). Fixed widths. Default slots: Position top-left, Job top-right, Probe Z bottom-right and collapsed (it grows upward when opened). Position, collapsed state and stacking order are remembered per browser (`localStorage` `kinetiq.layout.v1`); **Reset layout** (icon button in the top bar) glides them back to their default slots.
 - **Dragging** only from the header, never from controls inside it, so a jog press can never move a widget. A widget is kept fully on screen when it fits, otherwise its header stays visible; shrinking the window pulls widgets back in.
 - **Collapsed widgets keep their status visible:** Position shows work X/Y/Z, Job keeps its status badge plus progress and file name, Probe Z keeps the probe input and the run state.
 - **3D view:** fills the window; Fit and the view presets frame the content in the free area (window minus top bar, toolbar and open widgets on each side). The view toolbar sits at the bottom centre and slides sideways when an open widget reaches into the bottom band.

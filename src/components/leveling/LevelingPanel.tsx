@@ -29,7 +29,7 @@ export function LevelingPanel() {
       <Dialog.Trigger asChild>
         <Button variant="ghost" title="Bed leveling: probe a height map and level a job">
           {running ? <Loader2 size={14} className="animate-spin text-accent" aria-hidden /> : <Layers size={14} aria-hidden />}
-          Leveling
+          <span className="max-[1599px]:sr-only">Leveling</span>
         </Button>
       </Dialog.Trigger>
       <Dialog.Portal>

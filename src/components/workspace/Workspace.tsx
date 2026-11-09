@@ -74,8 +74,12 @@ export function Workspace() {
         className="glass-bar fixed inset-x-0 top-0 z-40 flex items-center gap-4 px-4"
         style={{ height: TOP_BAR }}
       >
-        <Wordmark />
-        <div className="h-5 w-px bg-line" aria-hidden />
+        {/* Width budget: below 1440 px the wordmark goes and the connection fields narrow; below
+            1600 px Leveling and Settings are icon-only. Hold and Reset never shrink. */}
+        <span className="flex shrink-0 items-center gap-4 max-[1439px]:hidden">
+          <Wordmark />
+          <span className="h-5 w-px bg-line" aria-hidden />
+        </span>
         <ConnectionBar />
         {stateView ? (
           <StatusBadge
@@ -87,9 +91,14 @@ export function Workspace() {
         ) : null}
         <LevelingPanel />
         <SettingsPanel />
-        <Button variant="ghost" onClick={resetLayout} title="Put the widgets back in their default places">
-          <LayoutTemplate size={14} aria-hidden />
-          Layout
+        <Button
+          variant="ghost"
+          onClick={resetLayout}
+          title="Reset layout: put the widgets back in their default places"
+          aria-label="Reset layout"
+          className="w-8 px-0!"
+        >
+          <LayoutTemplate size={15} aria-hidden />
         </Button>
         <MachineControls />
       </header>

@@ -30,7 +30,8 @@ export function SettingsPanel() {
       <Dialog.Trigger asChild>
         <Button variant="ghost" title="Machine settings (FluidNC config)">
           <Settings size={14} aria-hidden />
-          Settings
+          {/* Icon-only below 1600 px so the connection fields keep their width. */}
+          <span className="max-[1599px]:sr-only">Settings</span>
         </Button>
       </Dialog.Trigger>
       <Dialog.Portal>

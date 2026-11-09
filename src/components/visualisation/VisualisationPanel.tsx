@@ -258,9 +258,10 @@ export default function VisualisationPanel() {
           </div>
         ) : null}
         <div
-          className="pointer-events-none absolute bottom-4 left-4 flex items-center gap-3 text-[11px] text-ink-3"
+          className="pointer-events-none absolute bottom-4 left-4 flex flex-col items-start gap-1 text-[11px] text-ink-3"
           style={{ textShadow: '0 1px 2px rgb(0 0 0 / 0.6)' }}
         >
+          <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-2 w-2 rounded-full bg-accent" aria-hidden /> Tool
           </span>
@@ -283,6 +284,7 @@ export default function VisualisationPanel() {
               <span className="inline-block h-px w-3 bg-[#2f6a94]" aria-hidden /> Path
             </span>
           )}
+          </div>
           <span>W0 work origin · M0 machine origin · grid 10 mm</span>
         </div>
       </div>

@@ -19,6 +19,28 @@ export const isBlockedKey = (key) => {
   return name === 'constructor' || name === 'prototype' || name.startsWith('__');
 };
 
+// SECURITY (Kinetiq): turns a computed key into the string that is BOTH checked and used, or
+// undefined when it is blocked. The key must be converted exactly once: `obj[key]` stringifies an
+// object key again, and an object whose toString answers differently each time
+// (`{toString: [].shift.bind(["a", "constructor"])}`) passed the check as "a" and was then read as
+// "constructor". Never check a key and then index with the original value.
+export const toSafeKey = (key) => {
+  if (typeof key === 'symbol') {
+    return undefined;
+  }
+  const name = String(key);
+  return isBlockedKey(name) ? undefined : name;
+};
+
+// SECURITY (Kinetiq): the constructors that compile a string into code. Second line of defence behind
+// isBlockedKey: an expression that still reaches one of them gets undefined.
+const CODE_CONSTRUCTORS = new Set([
+  Function,
+  (async () => {}).constructor,
+  (function* () {}).constructor,
+  (async function* () {}).constructor,
+]);
+
 const evaluateExpression = (src, vars) => {
   if (!vars || typeof vars !== 'object') {
     vars = { ...vars };
@@ -142,7 +164,8 @@ const evaluateExpression = (src, vars) => {
 
     if (node.type === 'Identifier') {
       if (Object.hasOwnProperty.call(vars, node.name)) {
-        return vars[node.name];
+        const value = vars[node.name];
+        return CODE_CONSTRUCTORS.has(value) ? UNRESOLVED : value;
       }
       return UNRESOLVED;
     }
@@ -186,13 +209,19 @@ const evaluateExpression = (src, vars) => {
         if (isBlockedKey(node.property.name)) {
           return UNRESOLVED; // SECURITY (Kinetiq): see isBlockedKey
         }
-        return obj[node.property.name];
+        const value = obj[node.property.name];
+        return CODE_CONSTRUCTORS.has(value) ? UNRESOLVED : value;
       }
       const prop = walk(node.property);
-      if (prop === UNRESOLVED || isBlockedKey(prop)) {
+      if (prop === UNRESOLVED) {
+        return UNRESOLVED;
+      }
+      const key = toSafeKey(prop); // converted once: the checked string is the one used below
+      if (key === undefined) {
         return UNRESOLVED; // SECURITY (Kinetiq): see isBlockedKey
       }
-      return obj[prop];
+      const value = obj[key];
+      return CODE_CONSTRUCTORS.has(value) ? UNRESOLVED : value;
     }
 
     if (node.type === 'ConditionalExpression') {

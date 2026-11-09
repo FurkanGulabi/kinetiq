@@ -26,7 +26,9 @@ Production:
 npm run build && npm start
 ```
 
-Kinetiq listens on `http://127.0.0.1:8000`. Override with `KINETIQ_PORT` / `KINETIQ_HOST`. Configuration lives in `~/.kinetiqrc` (override with `KINETIQ_RC`).
+Kinetiq listens on `http://127.0.0.1:8000`. Override with `KINETIQ_PORT` / `KINETIQ_HOST`. Configuration lives in `~/.kinetiqrc` (override with `KINETIQ_RC`). Uploaded jobs are kept in `~/.kinetiq/jobs` and FluidNC config backups in `~/.kinetiq/config-backups` (override with `KINETIQ_JOBS_DIR` / `KINETIQ_CONFIG_BACKUP_DIR`). `KINETIQ_LOG_LEVEL` sets the backend log level (default `info`).
+
+Type-check app and server with `npm run typecheck`.
 
 No machine at hand? Run a fake FluidNC controller on a pseudo-terminal (macOS / Linux, Python 3):
 
@@ -39,4 +41,4 @@ See [`docs/FAKE_CONTROLLER.md`](docs/FAKE_CONTROLLER.md).
 
 ## Documentation
 
-See [`docs/`](docs): CNCjs analysis, backend integration, architecture and design system, API reference, implementation plan.
+See [`docs/`](docs): CNCjs analysis, backend integration, architecture and design system, API reference, implementation plan, bed leveling, machine settings editor, fake controller, and hardware session logs ([`docs/hardware/`](docs/hardware)).

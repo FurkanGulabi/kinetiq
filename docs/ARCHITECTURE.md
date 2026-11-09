@@ -2,7 +2,7 @@
 
 **Kinetiq: Advanced Motion Control.** A modern, minimal and reliable control interface for GRBL-compatible CNC machines. The initial target is FluidNC on an ESP32-WROOM-32U driving NEMA 23 steppers through TB6600 drivers.
 
-**Status:** Decisions D1–D4 approved 2026-11-08 (`BACKEND_INTEGRATION.md` §9). Implementation in progress (Milestone 1).
+**Status:** Decisions D1–D4 approved 2026-11-08 (`BACKEND_INTEGRATION.md` §9). Milestones M1–M5b and the M3 console are implemented, plus Probe Z, bed leveling and the machine settings editor (`IMPLEMENTATION_PLAN.md`).
 
 ---
 
@@ -11,7 +11,7 @@
 1. **One application.** A single Next.js project and a single Node.js process.
 2. **CNCjs does the machine work.** Serial, streaming, buffering, parsing and safety logic come from the CNCjs backend unchanged. Kinetiq adds a UI and about 40 lines of bootstrap.
 3. **The server is the source of truth.** The UI renders the state the backend broadcasts. It never guesses machine state and never acts optimistically on motion.
-4. **Minimal surface.** Four widgets, one page, few dependencies, no speculative abstractions.
+4. **Minimal surface.** A handful of widgets, one page, few dependencies, no speculative abstractions.
 5. **Safety first.** Every control is gated by verified backend state. Real-time hold and reset are always reachable. Software controls never claim to be an emergency stop.
 
 ---
@@ -35,7 +35,7 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 
 | Layer | Choice | Why |
 |---|---|---|
-| Framework | **Next.js** (App Router, current stable; exact version pinned at M1) + **React** + **TypeScript** | As required |
+| Framework | **Next.js 16** (App Router) + **React 19** + **TypeScript** | As required |
 | Process host | **Next.js custom server** (`server.ts`) | Hosts CNCEngine on the same `http.Server` (D1) |
 | Machine backend | **Built-in CNCjs GRBL backend** (`src/server/cnc`, carried over from CNCJS-fork) | Same logic as CNCjs, no external fork (D2, revised 2026-11-08) |
 | Realtime client | **`socket.io-client@2.x`** | Protocol lock-step with the CNCjs Socket.IO 2.2 server (D3) |
@@ -43,6 +43,7 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 | Primitives | **Radix UI**, only `@radix-ui/react-select` and `@radix-ui/react-dialog` | Accessible select and confirmation dialog without a full component library |
 | 3D view | **three.js** (plain, no React wrapper) | Live machine visualisation; imperative updates avoid React re-renders at 4 Hz |
 | Icons | `lucide-react` | Consistent stroke icons, tree-shaken |
+| YAML | `yaml` | Syntax check and parsing of the FluidNC config (settings editor) |
 | State | React `useSyncExternalStore` over one small module store | Native; no state library |
 | Server runner | `tsx` (dev), `tsc` build of `server.ts` (prod) | Minimal |
 | Fonts | System stacks only (no web-font download) | Works offline on a shop PC; system fonts ship optical sizing |
@@ -55,40 +56,57 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 
 ```
 kinetiq/
-├── package.json                 name: "kinetiq"; scripts: dev / build / start
-├── server.ts                    custom server: http.Server + Next handler + CNCEngine + session + shutdown
+├── package.json                 name: "kinetiq"; scripts: dev / build / start / typecheck / fake-controller / dev:fake
+├── server.ts                    custom server: http.Server + Kinetiq HTTP APIs + Next handler + CNCEngine + shutdown
 ├── tsconfig.json                app (Next)
 ├── tsconfig.server.json         server.ts → dist/server.js (CommonJS, Node target)
 ├── next.config.ts
 ├── postcss.config.mjs           @tailwindcss/postcss
+├── public/favicon.svg
+├── scripts/
+│   ├── fake-controller.py       fake FluidNC on a pseudo-terminal (FAKE_CONTROLLER.md)
+│   └── build-fluidnc-schema.mjs generates src/lib/fluidnc/schema.json (SETTINGS_EDITOR.md)
 ├── docs/                        ← this documentation
 └── src/
-    ├── server/                  SERVER-ONLY. Imported by server.ts, never by src/app or src/components.
-    │   ├── backend.ts           loads src/server/cnc (config, secret, CNCEngine); shutdown helper
+    ├── server/                  SERVER-ONLY. Imported by server.ts, never by src/app, src/components or src/lib.
+    │   ├── backend.ts           loads src/server/cnc (rc file, secret, CNCEngine); closeAllControllers() for shutdown
     │   ├── cnc/                 CNCjs GRBL server code (JavaScript, see cnc/README.md)
-    │   ├── session.ts           GET /api/kinetiq/session (JWT mint, Host check)
-    │   └── jobs.ts              /api/kinetiq/jobs (job library)
+    │   ├── session.ts           GET /api/kinetiq/session (JWT mint, Host check); isAuthorized() for the HTTP APIs
+    │   ├── jobs.ts              /api/kinetiq/jobs (job library)
+    │   └── fluidnc/             /api/kinetiq/machine-config (settings editor): exchange.ts, xmodem.ts, machineConfig.ts
+    ├── types/socket.io-client.d.ts
     ├── app/
     │   ├── layout.tsx           <html>, fonts, metadata ("Kinetiq")
     │   ├── page.tsx             renders <Workspace/> (static shell)
-    │   └── globals.css          Tailwind import + design tokens (@theme)
+    │   └── globals.css          Tailwind import, design tokens (@theme), glass material and motion
     ├── lib/
     │   ├── cnc/
-    │   │   ├── protocol.ts      typed event maps, mirroring API_REFERENCE.md §2–4
-    │   │   ├── client.ts        socket singleton: connect(token), list, open, close, command, writeln
-    │   │   ├── store.ts         machine store + useMachine(selector)
-    │   │   ├── console-store.ts ring buffer (2,000 lines), per-frame batching + useConsole()
-    │   │   ├── derive.ts        pure: connectionStatus, jobStatus, canJog, canSend, jobTimes, units
-    │   │   └── commands.ts      jogLine(axis, dir, step, feed, units), stopSequence()
-    │   └── format.ts            coordinates, durations, clock times, percentages
+    │   │   ├── protocol.ts      typed event maps, mirroring API_REFERENCE.md §2–4; baud rates
+    │   │   ├── client.ts        socket singleton: startClient, listPorts, openPort, closePort, sendCommand,
+    │   │   │                    sendGcode (Feeder), sendLine (writeln), sendOverride, loadProgram, stopJob
+    │   │   ├── store.ts         machine store + useMachine(selector) + subscribe()
+    │   │   ├── console-store.ts ring buffer (2,000 lines), per-frame batching, useConsole(), command history
+    │   │   ├── derive.ts        pure views and gating: connectionView, machineStateView, jogView, axisControlsView,
+    │   │   │                    jobView, overridesView, consoleView, settingsView, probeView, levelingView, …
+    │   │   ├── commands.ts      line builders: jogLine, moveAxisLine, zeroAxisLine, homeAxisLine, goToZeroLines
+    │   │   ├── lineSequence.ts  one-line-at-a-time sequences with stop rules (Probe Z, height map)
+    │   │   └── probe.ts         Z probe with a touch plate
+    │   ├── gcode/toolpath.ts    G-code → 3D toolpath (M5b)
+    │   ├── jobs/library.ts      job library client
+    │   ├── leveling/            heightmap.ts, run.ts (probing), compensate.ts (BED_LEVELING.md)
+    │   ├── fluidnc/             settings editor client: machineConfig.ts, configText.ts, schema.json
+    │   └── ui/                  layout.ts (widget positions, kinetiq.layout.v1), spring.ts (drag/throw physics)
     └── components/
-        ├── ui/                  design-system primitives (§9.6)
-        ├── workspace/Workspace.tsx   layout grid; mounts the socket lifecycle
+        ├── ui/                  design-system primitives (§9.6), incl. FloatingWidget
+        ├── workspace/Workspace.tsx     page: 3D background, top bar, alert cards, widgets; mounts the socket
         ├── connection/ConnectionBar.tsx
-        ├── safety/SafetyControls.tsx (Feed Hold, Reset; D4)
-        ├── position/PositionPanel.tsx  readout + JogPad + JogSettings
-        ├── job/JobPanel.tsx            state, meter, stat row, controls (D4)
-        └── console/ConsoleWidget.tsx   log list + input (floating widget, §10.8)
+        ├── safety/MachineControls.tsx  Home, Unlock, Hold/Resume, Reset (D4)
+        ├── position/                   PositionPanel (readout, jog, Go to zero), AxisRow, ProbeSection (Probe Z widget)
+        ├── job/                        JobPanel, Overrides, UploadDialog, RecentJobs
+        ├── console/ConsoleWidget.tsx   log list + input (floating widget, §10.8)
+        ├── visualisation/              VisualisationPanel + MachineScene (three.js)
+        ├── leveling/                   LevelingPanel (sheet), LevelingWorkspace, HeightMapView
+        └── settings/                   SettingsPanel (sheet), SettingsEditor
 ```
 
 **Import boundary (safety-relevant):** nothing under `src/app`, `src/components` or `src/lib` may import `src/server/**`. This keeps serialport and CNCEngine out of Next's bundles and HMR, so the process can never hold two engines or two handles on the port.
@@ -99,15 +117,19 @@ kinetiq/
 
 | Unit | Responsibility | Talks to |
 |---|---|---|
-| `server.ts` | Boot order (`BACKEND_INTEGRATION.md` §5.1), session route, shutdown | CNCjs modules, Next |
+| `server.ts` | Boot order (`BACKEND_INTEGRATION.md` §5.1), routes `/api/kinetiq/{session,jobs,machine-config}`, shutdown | CNCjs modules, Next |
 | `lib/cnc/client.ts` | Owns the **only** socket. Fetches a token, connects with `query: 'token=…'`, and exposes typed emitters. Never decides policy. | Socket.IO |
-| `lib/cnc/store.ts` | Reduces server events into one immutable `MachineState`. Holds client flags: `connecting`, `userRequestedClose`, `stopSequence`. | client |
+| `lib/cnc/store.ts` | Reduces server events into one immutable `MachineState`. Holds client flags: `connection.phase === 'opening'`, `userRequestedClose`, `stopSequence`, `jobErrors`, `configBusy`, `probe`, `leveling`. | client |
 | `lib/cnc/derive.ts` | Pure functions from `MachineState` to UI state (connection, job, guards, times). **All gating rules live here.** | — |
-| `ConnectionBar` | Widget 1 | store, client |
-| `ConsoleWidget` | §10.8 | console-store, client |
+| `lib/ui/layout.ts` | Widget positions, collapsed state and stacking order; live widget rectangles for the 3D view's Fit | localStorage |
+| `ConnectionBar` | Widget 1 (top bar) | store, client |
+| `VisualisationPanel` | Widget 2: full-window 3D view and its toolbar (§10.3) | store, layout |
 | `PositionPanel` | Widget 3 | store, client |
-| `JobPanel` | Widget 4 | store, client |
-| `SafetyControls` | Hold, resume and reset (D4) | store, client |
+| `JobPanel` | Widget 4 | store, client, job library |
+| `ProbeSection` | Probe Z widget (§10.9) | store, `lib/cnc/probe.ts` |
+| `ConsoleWidget` | §10.8 | console-store, client |
+| `MachineControls` | Home, Unlock, Hold/Resume, Reset (D4, §10.6) | store, client |
+| `LevelingPanel`, `SettingsPanel` | Top-bar sheets (§10.9) | store, `lib/leveling`, `lib/fluidnc` |
 
 ---
 
@@ -116,26 +138,33 @@ kinetiq/
 ```ts
 interface MachineState {
   backend: 'connecting' | 'online' | 'offline';       // socket lifecycle
+  backendError: string | null;
+  baudrates: number[];                                // extra rates from startup (rc file)
   ports: { port: string; manufacturer?: string; inuse: boolean }[];
+  portsLoaded: boolean;
   connection: {
     port: string | null; baudrate: number | null;
     phase: 'closed' | 'opening' | 'open';           // client flag + verified events
     userRequestedClose: boolean;
-    error: { kind: 'open-failed' | 'lost'; port: string } | null;
+    error: { kind: 'open-failed' | 'lost' | 'backend'; port: string | null; message?: string } | null;
   };
-  controller: { state: GrblState | null; settings: GrblSettings | null; firmware: string | null };
+  controller: { type: string | null; state: GrblState | null; settings: GrblSettings | null; firmware: string | null };
   workflow: 'idle' | 'running' | 'paused';
   sender: SenderStatus | null;
   feeder: FeederStatus | null;
-  program: { name: string } | null;                   // from gcode:load / gcode:unload
-  stopSequence: 'idle' | 'pausing' | 'stopping';      // Kinetiq Stop (API_REFERENCE §7.1)
+  program: { name: string; gcode: string; jobId: string | null; leveling: ProgramLeveling | null } | null; // gcode:load / unload
+  stopSequence: { phase: 'idle' } | { phase: 'stopping'; startedAt: number } | { phase: 'failed'; message: string }; // Kinetiq Stop (API_REFERENCE §7.1)
+  jobErrors: { startTime: number; messages: string[] } | null; // controller errors seen this run (API_REFERENCE §7.2)
+  configBusy: boolean;                                // settings editor talking to the controller
+  probe: ProbeRun;                                    // Z probe sequence (lib/cnc/probe.ts)
+  leveling: LevelingRun;                              // height-map probing (lib/leveling/run.ts)
 }
 ```
 
-- **One store, selector hooks.** `useMachine(s => s.controller.state?.status.wpos)` re-renders only when the selected slice changes, compared with `Object.is` or a shallow compare.
-- **The console is a separate store.** Line traffic (hundreds of lines per second when running `$$` or `$CD`) must not re-render the readouts. It is a ring buffer of 2,000 entries, each `{ id, t, dir: 'in'|'out', kind, text, source }`.
-- **No program text in the store.** `gcode:load` delivers the whole program; only `name` is kept.
-- **No persistence**, except the last-used port, baud, jog step and jog feed in `localStorage`.
+- **One store, selector hooks.** `useMachine(s => s.controller.state?.status.wpos)` re-renders only when the selected slice changes, compared with `Object.is`. Imperative consumers (the 3D view) use `subscribe()` and never re-render React.
+- **The console is a separate store.** Line traffic (hundreds of lines per second when running `$$` or `$CD`) must not re-render the readouts. It is a ring buffer of 2,000 entries, each `{ id, kind, text, time, origin?, level? }`.
+- **Program text is kept** (`program.gcode`, including the backend's appended `%wait` line) because the 3D view draws the toolpath from it (§10.3) and bed leveling compensates it.
+- **Persistence is per browser and limited to preferences:** `localStorage` keys `kinetiq.connection` (last port and baud), `kinetiq.jog` (step and feed per unit system), `kinetiq.goZeroIncludeZ`, `kinetiq.layout.v1` (widgets), `kinetiq.probe` (Probe Z settings), `kinetiq.leveling.settings` and `kinetiq.heightmap` (last height map); `sessionStorage` `kinetiq.consoleHistory` (last 50 console commands). Machine state is never persisted.
 
 ---
 
@@ -148,7 +177,7 @@ widget action ──▶ guard (derive.can*) ──▶ client.emit(...) ──▶
 
 - **No optimistic machine state.** Clicking Jog changes nothing in the store. The new position arrives through `controller:state` within about 250 ms.
 - **Attach on (re)connect.** After `startup`, emit `list`. If a port is `inuse`, emit `open(port, {baudrate: last or 115200})`. The backend attaches without reopening and replays the full state. The same path covers a page reload, a second tab, and backend reconnects.
-- **Socket loss.** `backend: 'offline'`, a banner reads "Kinetiq server unreachable: machine state unknown", and every machine control is disabled. Socket.IO reconnects on its own and the attach step runs again.
+- **Socket loss.** `backend: 'offline'`, an alert card under the top bar reads "Connection to the Kinetiq server was lost — machine state unknown. Reconnecting…", and every machine control is disabled. Socket.IO reconnects on its own and the attach step runs again.
 - **Token failure** (`connect_error` / `error` with an auth message): fetch a new token once, then report the error.
 
 ---
@@ -158,11 +187,11 @@ widget action ──▶ guard (derive.can*) ──▶ client.emit(...) ──▶
 | Layer | Strategy |
 |---|---|
 | Firmware errors and alarms | Shown in the console (classified and colored); alarm state appears in the header badge. During a job, pause-on-error is backend behaviour, and the Job widget shows **Error** with `holdReason.msg`. |
-| Connection | Open failure and connection loss are distinct, persistent inline messages in the Connection widget, cleared on the next successful open. No toasts. |
+| Connection | Open failure and connection loss are distinct messages in an alert card under the top bar. They stay until dismissed (×) or the next successful open. No toasts. |
 | Invalid user input | Validated before emitting: numeric baud, a finite feed above 0, an allowed jog step, a non-empty console line. Errors are shown inline. |
 | Disallowed actions | Controls are **disabled with a stated reason** (tooltip and helper text) instead of failing silently. |
-| Server startup failures | `server.ts` logs and exits non-zero if the CNCjs build is missing or the port cannot bind. Starting with a half-working backend is never allowed. |
-| Client exceptions | Each widget gets a React error boundary, so a rendering bug in one widget cannot blank the safety controls. |
+| Server startup failures | `server.ts` logs `[kinetiq] Failed to start` and exits non-zero if the backend cannot load, Next cannot prepare or the port cannot bind. Starting with a half-working backend is never allowed. |
+| Client exceptions | Planned: a React error boundary per widget, so a rendering bug in one widget cannot blank the safety controls. **Not implemented yet**: there is no error boundary in `src/components` today. |
 
 ---
 
@@ -199,7 +228,7 @@ widget action ──▶ guard (derive.can*) ──▶ client.emit(...) ──▶
 | `--ink-2` | `#a1a7af` | Secondary text (machine coordinates, metadata) |
 | `--ink-3` | `#6b727b` | Labels and units |
 | `--accent` | `#5ab8ff` | **Kinetiq Signal**: primary action, focus ring, selected segment, meter fill |
-| `--accent-track` | `#1b3245` | Meter track (darker step of the accent hue, per the dataviz *meter* rule) |
+| `--accent-track` | `#1b3245` | Darker step of the accent hue: leveling progress track, pressed view toggles, drop-zone highlight (the Job `Meter` track is `--surface-2`) |
 | `--ok` | `#0ca30c` | Connected, Completed |
 | `--warn` | `#fab219` | Paused, Hold, Door, Waiting for controller |
 | `--crit` | `#d03b3b` | Alarm, Error, Connection error/lost, Reset button outline |
@@ -229,7 +258,7 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
 - **Motion (emil-design-eng):**
   - Press: `transform: scale(0.97)` with 120 ms `cubic-bezier(0.23, 1, 0.32, 1)`.
   - Hover color: 120 ms `ease`, only under `(hover:hover) and (pointer:fine)`.
-  - Meter fill: `transform: scaleX()` with 250 ms linear (constant motion, matching the 250 ms server tick).
+  - Meter fill: a plain width change, not animated (the 250 ms status tick already reads as steady progress).
   - Confirmation dialog: opacity plus `scale(0.98→1)` at 180 ms in and 120 ms out.
   - **No animation** on jog presses beyond press feedback, on readout changes, on console lines, or on state changes of the badge. Under `prefers-reduced-motion` only opacity fades remain.
 - **Focus:** a 2 px `--accent` ring offset by 2 px on `:focus-visible`. Everything is keyboard-reachable.
@@ -254,14 +283,14 @@ At the user's request the 3D view became the page background and every other reg
 
 | Primitive | Variants | Notes |
 |---|---|---|
-| `Button` | `primary` (accent fill), `secondary` (surface-2), `ghost`, `danger` (crit outline) | `disabledReason` prop renders a tooltip and `aria-describedby` |
+| `Button` | `primary` (accent fill), `secondary` (surface-2), `ghost`, `danger` (crit outline), `warn` (warn outline, Hold) | `disabledReason` prop renders a tooltip and `aria-describedby` |
 | `SegmentedControl` | — | Jog step, jog feed. Arrow-key navigation. |
 | `Select` | — | Radix Select: port, baud |
-| `StatusBadge` | `neutral`, `ok`, `warn`, `crit` | Always icon + label |
+| `StatusBadge` | `neutral`, `accent`, `ok`, `warn`, `crit` | Always icon + label |
 | `Readout` | `primary`, `secondary` | Mono, tabular, fixed decimals, unit suffix in `--ink-3` |
-| `Meter` | — | Track plus fill, `role="progressbar"`, `aria-valuenow` |
+| `Meter` | `tone` (neutral, accent, ok, warn, crit) | Track plus fill, `role="progressbar"`, `aria-valuenow` |
 | `FloatingWidget` | — | Glass widget: drag by the header, collapse to the header (chevron or double-click) with a compact summary, click to bring to front. Layout in `lib/ui/layout.ts`. |
-| `ConfirmDialog` | — | Radix Dialog; used only for **Stop job** |
+| `ConfirmDialog` | — | Radix Dialog; used for **Stop job** |
 
 ---
 
@@ -276,16 +305,16 @@ At the user's request the 3D view became the page background and every other reg
 │ ┌ POSITION ───── G54 · mm ┐       (alert cards hang here)          ┌ JOB ─────────── ● Running ┐       │
 │ │ readout, go to, jog,    │                                         │ program, progress, controls│       │
 │ │ step / feed             │        3D VIEW = page background        └────────────────────────────┘       │
-│ │                         │        (frames content in the                                               │
+│ │                         │        (frames content in the           ┌ › CONSOLE ──── newest line ┐       │
 │ └─────────────────────────┘         area the widgets leave free)    ┌ › PROBE Z ─────── Probe open ┐     │
 │                          [ file · extents │ Iso Top Front │ ⌁ ⇢ │ ⌖ ⤢ ⌫ ]                              │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Layers (back to front):** 3D view (z 0) → status chip and view toolbar (z 5) → widgets (z 10–12, last touched on top) → sheets and their scrim (z 30) → alert cards (z 35) → top bar (z 40) → dialogs (z 40–50).
-- **Widgets:** Position & Jog (560 px), Job (480 px), Probe Z (400 px; split out of the Position panel). Fixed widths. Default slots: Position top-left, Job top-right, Probe Z bottom-right and collapsed (it grows upward when opened). Position, collapsed state and stacking order are remembered per browser (`localStorage` `kinetiq.layout.v1`); **Reset layout** (icon button in the top bar) glides them back to their default slots.
+- **Layers (back to front):** 3D view (z 0) → status chip and view toolbar (z 5) → widgets (z 10–13, last touched on top) → sheets and their scrim (z 30) → alert cards (z 35) → top bar (z 40) → dialogs (z 40–50).
+- **Widgets:** Position & Jog (560 px), Job (480 px), Probe Z (400 px; split out of the Position panel), Console (480 px, §10.8). Fixed widths. Default slots: Position top-left, Job top-right, Probe Z bottom-right and Console just above it, both collapsed (they grow upward when opened). Position, collapsed state and stacking order are remembered per browser (`localStorage` `kinetiq.layout.v1`); **Reset layout** (icon button in the top bar) glides them back to their default slots.
 - **Dragging** only from the header, never from controls inside it, so a jog press can never move a widget. A widget is kept fully on screen when it fits, otherwise its header stays visible; shrinking the window pulls widgets back in.
-- **Collapsed widgets keep their status visible:** Position shows work X/Y/Z, Job keeps its status badge plus progress and file name, Probe Z keeps the probe input and the run state.
+- **Collapsed widgets keep their status visible:** Position shows work X/Y/Z, Job keeps its status badge plus progress and file name, Probe Z keeps the probe input and the run state, Console shows the newest line that is not `ok`.
 - **3D view:** fills the window; Fit and the view presets frame the content in the free area (window minus top bar, toolbar and open widgets on each side). The view toolbar sits at the bottom centre and slides sideways when an open widget reaches into the bottom band.
 - **Sheets:** Settings and Leveling open as large glass sheets below the top bar over a dim scrim (non-modal), so Hold and Reset stay clickable.
 
@@ -302,17 +331,17 @@ At the user's request the 3D view became the page background and every other reg
 | Element | Behaviour |
 |---|---|
 | Status | `StatusBadge`: **Disconnected** (neutral, ○), **Connecting…** (neutral, spinner), **Connected** (ok, ●), **Connection error** (crit, ▲). Sub-status after Connected: "Waiting for controller…" (warn) until the first status report. |
-| Port | Radix Select listing `serialport:list` entries (`port · manufacturer`). Ports shown as "in use" belong to this backend. A refresh icon re-emits `list`. Disabled while connected. |
-| Baud | Select: 115200 (default), 250000, 230400, 57600, 38400, 19200, 9600, plus any `startup.baudrates`. Disabled while connected. |
+| Port | Radix Select listing `serialport:list` entries (port path, with the manufacturer or "in use" as a hint). Ports shown as "in use" belong to this backend; a remembered port that is not listed shows as "not detected". A refresh icon re-emits `list`. Disabled while connected. |
+| Baud | Select, highest first: 250000, 230400, 115200 (default), 57600, 38400, 19200, 9600, plus any `startup.baudrates`. Disabled while connected. |
 | Action | One button: **Connect** (primary) ↔ **Disconnect** (secondary). Disabled while connecting. |
 | Identification | When ready: `FluidNC v3.7.8` (from the banner) or `Grbl 1.1h`. Hover shows port, baud and the GRBL-compat version. |
-| Errors | Inline under the bar, persistent until the next attempt. "Could not open /dev/cu.usbserial-0001. Check that the cable is connected and no other program is using the port." or "Connection lost: the controller may still finish moves it already received." |
+| Errors | An alert card under the top bar, dismissible, cleared by the next successful open. "Could not open /dev/cu.usbserial-0001. Check that the cable is connected and that no other program is using the port." or "Connection to /dev/cu.usbserial-0001 was lost. The controller may still finish moves it had already received." |
 
 ### 10.3 Widget 2: Visualisation (replaces the Console, 2026-11-08)
 
 > **2026-11-09:** the view now fills the window as the page background (§10.1). Its controls moved into a floating glass toolbar at the bottom centre, together with the program name and cut extents; the legend sits at the bottom-left. Fit frames the content in the area the widgets leave free.
 
-At the user's request the Console panel was replaced by a live 3D view of the machine position. The console remains a candidate for a later milestone (manual commands currently go through the top-bar and axis controls).
+At the user's request the Console panel was replaced by a live 3D view of the machine position. The console came back on 2026-11-09 as a floating widget (§10.8).
 
 | Element | Behaviour |
 |---|---|
@@ -321,8 +350,8 @@ At the user's request the Console panel was replaced by a live 3D view of the ma
 | Tool | Accent cone whose tip is the live work position, a grey shank above it, a dashed drop line to Z=0 and a footprint ring on the grid for depth. |
 | Path | Trail of recent tool positions (points at least 0.02 mm apart, capped at 20,000; the oldest half is dropped when full). Clear-path button. |
 | Live updates | `VisualisationPanel` subscribes to the store imperatively (`subscribe`), so 4 Hz status updates never re-render React. The tool follows each status update with a short exponential smoothing (~90 ms) so motion reads continuously; **no smoothing under `prefers-reduced-motion`**. The readout panel remains the precise value. |
-| Camera | Orbit (drag), pan (right-drag), zoom (scroll); presets **Iso / Top / Front**; **Follow tool** toggle; **Fit** frames the work origin, tool and path. Renders on demand only. |
-| States | "No position — connect to a controller" until a status report arrives; a message instead of the canvas if WebGL is unavailable. |
+| Camera | Orbit (drag), pan (right-drag), zoom (scroll); presets **Iso / Top / Front**; **Follow tool** toggle; **Fit** frames the work origin, tool and path. Renders on demand only. The toolbar also toggles the program toolpath and the rapid moves. |
+| States | A "No position — connect to a controller" chip under the top bar until a status report arrives; "3D view unavailable: …" instead of the canvas if WebGL is unavailable. |
 | Loading | `three` is code-split with `next/dynamic` (`ssr: false`), so it loads only in the browser for this panel. |
 
 Implementation: `src/components/visualisation/MachineScene.ts` (imperative three.js) and `VisualisationPanel.tsx` (panel, controls, store subscription). **Program toolpath (M5b).** The loaded program (`store.program.gcode`, from `gcode:load`) is parsed by `src/lib/gcode/toolpath.ts` (pure; G0–G3, IJK/R arcs in G17/G18/G19 incl. helical, G20/G21, G90/G91, G90.1/G91.1) and drawn as one `LineSegments` with a small shader. Each vertex carries its program line index, counted like the CNCjs Sender (non-empty lines), so the executed portion is a single uniform: while a job runs, lines `< sender.received` are greyed out and the rest stay in the accent; when the job completes or is stopped the whole program returns to the accent. The tool trail is cleared when a job starts and whenever the program is loaded, replaced or unloaded, so a finished or removed job leaves nothing behind. Feeds are opaque and depth-tested (an upper, passed layer hides the deeper passes beneath it in Top view); rapids are translucent grey, drawn after feeds without depth writes, and can be hidden. Arcs follow GRBL's plane conventions (G18 is the (Z, X) frame), so what is drawn is what the controller moves. The machine starts wherever it is, so the first positioning move of each axis is not drawn; axes a program never moves (2D laser jobs) are drawn at 0. G28/G30/G92/G10 make the position unknown until the next absolute move; G53 moves are not drawn. Fit and the view presets frame the program, tool and origin. A label shows the file and its cut extents (feed moves). Parsing the 188k-line `examples/gcode/github.gcode` takes ~120 ms (Node) and ~0.5 s from Load click to drawn, so it runs on the main thread.
@@ -339,7 +368,7 @@ Not shown yet: the machine travel envelope (FluidNC reports `$130-132` max trave
 | Jog pad | 3×3 XY cross (Y+ top, Y− bottom, X− left, X+ right), plus a separate Z column (Z+ top, Z− bottom), offset by one column to show it is a different plane. The **centre button ■ is Stop jog** (`jogCancel`, `0x85`). Buttons are 52 px, with the letter and sign large and the arrow glyph small. |
 | Step | Segmented control: `0.01 · 0.1 · 1 · 10 · 100` mm (inch mode: `0.001 · 0.01 · 0.1 · 1 · 4` in). |
 | Feed | Segmented control: `100 · 500 · 1000 · 3000` mm/min (inch mode `4 · 20 · 40 · 120`), plus a custom numeric field validated to `0 < F ≤ 10000` mm/min (400 in/min); an invalid entry is flagged and reverts on blur. Step and feed are remembered per unit system in `localStorage`. **[Hardware check]** Real limits come from FluidNC's per-axis max rate, and the firmware clamps them anyway. |
-| Gating | Enabled only when connected and ready, workflow idle, `activeState` Idle or Jog, and the Feeder is not pending. Otherwise all jog buttons are disabled and the reason appears under the controls ("Alarm — use Home or Unlock in the top bar first", "Jog is disabled while a job is running or paused", "Jog is not available while Hold"). Stop jog stays enabled whenever the controller is reporting, because status lags up to 250 ms and `0x85` is harmless when idle. |
+| Gating | Enabled only when connected and ready, workflow idle, `activeState` Idle or Jog, the Feeder is not pending, and no Kinetiq sequence (Probe Z, height map, settings) is running. Otherwise all jog buttons are disabled and the reason appears under the controls ("Alarm — use Home or Unlock in the top bar first", "Jog is disabled while a job is running or paused", "Jog is not available while Hold"). Stop jog stays enabled whenever the controller is reporting, because status lags up to 250 ms and `0x85` is harmless when idle. |
 | Input mode | Pointer only in v1. Keyboard jogging is deliberately excluded (accidental-motion risk; not in scope). |
 
 **Go to zero** (under the jog pad): moves to work X0 Y0, and Z0 only when **Include Z** is checked. When Z is included, Z is raised to 0 first if the tool is below work zero, so the tool never travels diagonally through the stock. Hovering shows the planned move in the status line (in warn colour when Z is excluded and the tool is below zero).
@@ -351,7 +380,7 @@ Implemented in `src/components/job/` (`JobPanel`, `UploadDialog`, `RecentJobs`);
 | Element | Behaviour |
 |---|---|
 | Header | `JOB`, plus the job `StatusBadge`: Idle (neutral ○), Running (accent ▶), Paused (warn ‖), Completed (ok ✓), Cancelled (neutral ■), Error (crit ▲), Stopping… (spinner). The hold or error reason sits in a strip under the program row ("M0 program pause · M0 (check pause)", "error:20 (Unsupported command) at line 2"). |
-| Program | File name (middle-truncated), line count and size; **Open…** (upload menu) and **×** (unload). Both need an idle workflow. |
+| Program | File name (middle-truncated), line count and size; **Open…** (upload menu) and **×** (unload). Both need an idle workflow. A height-map leveled program is marked **Leveled** (warn "map no longer lines up" when the work zero or WCS changed since probing; Start is then blocked, see `BED_LEVELING.md`). |
 | Empty state | "No program loaded" + **Upload…** (primary), then the three most recent jobs with **Load**, and "View all (n)" when there are more. |
 | Meter | Full-width `Meter` (tone follows the state). Percentage large on the right, `received / total` under it. Completed shows 100 % (the backend rewinds the Sender); Cancelled keeps the progress last seen this session. |
 | Stat row | `STARTED` · `ELAPSED` · `REMAINING ≈ … (paused)` · `FINISHED`. Each has a hover note on its source and accuracy (`API_REFERENCE.md` §7.3). |
@@ -375,7 +404,7 @@ Order, at the far right of the top bar: **Home · Unlock │ Hold/Resume · Rese
 
 ### 10.7 Empty, disconnected and edge states
 
-- **Backend offline:** a full-width crit strip under the top bar, and all controls disabled.
+- **Backend offline:** a crit alert card under the top bar, and all controls disabled.
 - **Disconnected:** readouts show "—", jog is disabled, and the console keeps its history with the input disabled (placeholder "Connect to a controller first").
 - **Alarm:** the header badge shows `◆ ALARM`, the Position panel shows the unlock hint, and the latest `ALARM:` line is pinned at the top of the console until the state clears.
 
@@ -393,16 +422,26 @@ The deferred M3 console returns as a fifth floating widget (480 px). It starts c
 | Input | Enter sends with `writeln` (direct, not queued, so `$X`, `$H`, `?` work in Alarm). ↑/↓ walk this tab's last 50 commands (session storage), Esc clears. Disabled with the reason as placeholder when not connected, while a job runs or is paused (hazard H1) and while a Kinetiq sequence (probe, height map, settings) owns the port (`derive.consoleView`). A note under the input says lines run immediately, motion included. |
 | Clear | Clears this tab's view only. |
 
+### 10.9 Probe Z widget and the Leveling / Settings sheets
+
+- **Probe Z** (`ProbeSection.tsx`, sequence in `lib/cnc/probe.ts`): touch-plate probing that sets work Z0 on the stock surface. Settings (plate thickness, required, no default; max travel 25 mm; fast 100 / slow 25 mm/min; back-off 2 mm; retract 5 mm) are range-checked and kept in `localStorage`. The sequence is `G21 G91` → fast `G38.2` → back off → slow `G38.2` → `G90` → `G10 L20 P<wcs> Z<thickness>` → retract → restore the previous G90/G91 and units. Lines go one at a time through the Feeder (`lib/cnc/lineSequence.ts`) and the run stops at the first `error:`, `ALARM:`, probe report without contact, timeout or lost connection. Cancel sends Feed hold, then Reset. Gating (`derive.probeView`): connected, workflow idle, controller Idle, Feeder not pending, no other Kinetiq sequence, and the probe input (`Pn:` contains `P`) not already touching. The header shows the live probe input.
+- **Leveling** (top bar): opens the height-map sheet (`LevelingPanel` → `LevelingWorkspace`, `HeightMapView`). Flow, safety rules and compensation are in `BED_LEVELING.md`.
+- **Settings** (top bar): opens the FluidNC machine settings sheet (`SettingsPanel` → `SettingsEditor`), backed by `/api/kinetiq/machine-config`. See `SETTINGS_EDITOR.md`.
+- Both sheets are non-modal Radix Dialogs below the top bar (§10.1), so Hold and Reset stay reachable. Below 1600 px window width their top-bar buttons are icon-only.
+
 ---
 
 ## 11. Next.js integration strategy
 
 - **Single route `/`.** `page.tsx` is a Server Component that renders a static shell plus `<Workspace/>`, a Client Component that owns the socket lifecycle. No Server Actions, no Route Handlers, no data fetching on the server.
-- **Custom server owns the process.** `next({ dev, hostname: '127.0.0.1', port })`, then `app.getRequestHandler()` for everything except `/api/kinetiq/session` and `/socket.io/*`.
+- **Custom server owns the process.** `next({ dev, hostname, port, httpServer: server })`, then `app.getRequestHandler()` for everything except Kinetiq's own HTTP APIs (`/api/kinetiq/session`, `/api/kinetiq/jobs/*`, `/api/kinetiq/machine-config/*`, handled by `server.ts`) and `/socket.io/*` (answered by Engine.IO).
+- **Environment:** `KINETIQ_HOST` (default `127.0.0.1`), `KINETIQ_PORT` (else `PORT`, default `8000`), `KINETIQ_RC` (default `~/.kinetiqrc`), `KINETIQ_LOG_LEVEL` (backend log level, default `info`), `KINETIQ_JOBS_DIR` (default `~/.kinetiq/jobs`), `KINETIQ_CONFIG_BACKUP_DIR` (default `~/.kinetiq/config-backups`). `NODE_ENV=production` selects production mode.
 - **Scripts:**
-  - `dev`: `tsx watch server.ts`
+  - `dev`: `tsx watch server.ts`, excluding `src/app`, `src/components` and `src/lib` from the watch (Next's HMR handles those, so editing the UI never restarts the server or closes the port)
   - `build`: `next build && tsc -p tsconfig.server.json`
   - `start`: `NODE_ENV=production node dist/server.js`
+  - `typecheck`: `tsc --noEmit` for the app and the server
+  - `fake-controller`, `dev:fake`: fake FluidNC for development (`FAKE_CONTROLLER.md`)
 - **Never** set `output: 'standalone'`, because it does not trace a custom server.
 - The backend ships inside Kinetiq (`src/server/cnc`), so there is no external build to check at boot.
 
@@ -410,4 +449,4 @@ The deferred M3 console returns as a fifth floating widget (480 px). It starts c
 
 ## 12. Future expansion (designed for, not built)
 
-Excluded from v1, but the architecture adds them without restructuring: G-code visualisation, file manager, macros, probing, WCS screens, overrides, keyboard jogging, light theme. Each would be a new component reading the same store and using an existing backend command (`API_REFERENCE.md` §11). No abstraction is pre-built for them.
+Excluded from v1, but the architecture adds them without restructuring: macros, WCS screens, keyboard jogging, light theme. (G-code visualisation, a job library, Z probing, bed leveling and feed/spindle overrides have since been built the same way.) Each would be a new component reading the same store and using an existing backend command (`API_REFERENCE.md` §11). No abstraction is pre-built for them.

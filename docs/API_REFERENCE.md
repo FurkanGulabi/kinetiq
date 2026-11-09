@@ -2,7 +2,7 @@
 
 **Project:** Kinetiq: Advanced Motion Control
 **Scope:** The verified communication interface between the Kinetiq UI and the embedded CNCjs backend (GRBL controller only).
-**Source of truth:** `CNCJS-fork/src/server/services/cncengine/CNCEngine.js` and `CNCJS-fork/src/server/controllers/Grbl/GrblController.js`. Line numbers refer to commit `a3922a1bf`.
+**Source of truth:** `CNCJS-fork/src/server/services/cncengine/CNCEngine.js` and `CNCJS-fork/src/server/controllers/Grbl/GrblController.js`. Line numbers refer to commit `a3922a1bf`. The same code now runs inside Kinetiq as `src/server/cnc/` (same file layout); Kinetiq's few changes are listed in `src/server/cnc/README.md`, so line numbers in the embedded copy can differ slightly.
 
 Every event, payload and command below was read in source. Anything Kinetiq **derives** on the client is marked **[Kinetiq-derived]**. Anything not yet observed at runtime is marked **[runtime check]**.
 
@@ -151,7 +151,7 @@ type WorkflowState = 'idle' | 'running' | 'paused';
 | Action | Emit |
 |---|---|
 | Refresh ports | `socket.emit('list')` → `serialport:list` |
-| Connect | `socket.emit('open', port, { controllerType: 'Grbl', baudrate: 115200 }, cb)` |
+| Connect | `socket.emit('open', port, { controllerType: 'Grbl', baudrate }, cb)` (selected rate, default 115200; validated as a positive finite number first) |
 | Disconnect | `socket.emit('close', port, cb)` |
 | Re-attach after a page reload | `list` → for a port with `inuse: true`, `open(port, …)`. The backend attaches without reopening. |
 
@@ -174,7 +174,7 @@ The backend has no explicit "connecting" or "lost" event. Both are client-side d
 |---|---|
 | Controller type | `serialport:open.controllerType` (`'Grbl'`) |
 | GRBL-compat version | `controller:settings.version` |
-| Firmware name and version | Regex on `serialport:read` lines: `/\[FluidNC v([\d.]+[^\s\]]*)/` **[Kinetiq-derived]** |
+| Firmware name and version | Regex on `serialport:read` lines: `/FluidNC v(\d+(?:\.\d+)+[\w.-]*?)(?=[\s:\]]\|$)/` (matches the banner and the `$I` `[VER:…]` line) **[Kinetiq-derived]** |
 | Port, baud | `serialport:open` |
 
 ---
@@ -202,7 +202,7 @@ The backend has no explicit "connecting" or "lost" event. Both are client-side d
 |---|---|
 | Emit | `socket.emit('writeln', port, line, { __sender__: clientId })` |
 | Why `writeln` | It matches CNCjs console behaviour (direct, not queued), so `$X`, `$H` and `?` work in Alarm state, where Feeder commands are dropped (`GrblController.js:343-347`). |
-| Guard | **Disabled while `workflow:state !== 'idle'`** (hazard H1: an extra `ok` would desynchronise char counting). |
+| Guard | **Disabled while `workflow:state !== 'idle'`** (hazard H1: an extra `ok` would desynchronise char counting), and while a Kinetiq sequence (Probe Z, height-map probing, settings operation) owns the port (`derive.consoleView`). |
 
 ---
 
@@ -212,12 +212,12 @@ The backend has no explicit "connecting" or "lost" event. Both are client-side d
 
 | Action | Emit | Backend effect |
 |---|---|---|
-| Load program *(D4)* | `command(port, 'gcode:load', name, gcodeText, {}, cb)` | `Sender.load` (appends `%wait`); workflow → idle; emits `gcode:load`. `cb(err, senderStatus)`. |
+| Load program *(D4)* | `command(port, 'gcode:load', name, gcodeText, context, cb)` with `context = { kinetiqJobId?, kinetiqLeveling? }` (§7.4, `BED_LEVELING.md`) | `Sender.load` (appends `%wait`); workflow → idle; emits `gcode:load`. `cb(err, senderStatus)`. |
 | Unload *(D4)* | `command(port, 'gcode:unload')` | workflow → idle; emits `gcode:unload` |
 | Start *(D4)* | `command(port, 'gcode:start')` | workflow → running; Feeder reset; `Sender.next()` |
 | Pause *(D4)* | `command(port, 'gcode:pause')` | workflow → paused; Sender holds; writes `!` |
 | Resume *(D4)* | `command(port, 'gcode:resume')` | writes `~`; workflow → running |
-| Stop *(D4)* | Kinetiq sequence: `gcode:pause` → wait for `activeState === 'Hold' && subState === 0` → `command(port, 'gcode:stop', { force: true })` | workflow → idle; Sender rewinds; soft reset `0x18` if in Hold |
+| Stop *(D4)* | Kinetiq sequence (`client.stopJob`): `gcode:pause` (if running) → wait for `activeState === 'Hold' && subState === 0` (also accepted: `Door:0`, or Idle/Alarm once the workflow has been paused for ≥ 750 ms, i.e. nothing to decelerate) → `command(port, 'gcode:stop', { force: true })`. Gives up after 15 s with a message. | workflow → idle; Sender rewinds; soft reset `0x18` if in Hold |
 
 **Overrides** (Job panel, any time the controller is reporting, including while a job runs):
 
@@ -281,6 +281,10 @@ interface JobRun { status: 'completed' | 'cancelled' | 'error'; startedAt: numbe
 - **Storage:** `~/.kinetiq/jobs/<id>.nc` + `index.json` (dir `0700`, files `0600`; override `KINETIQ_JOBS_DIR`). Index writes are serialised and atomic (tmp + rename). The 50 most recently used jobs are kept; older files are deleted.
 - **Run outcome:** recorded by the browser when the workflow returns to idle: `completed` (finishTime set, no errors), `error` (an Error state or controller error was seen during the run), else `cancelled`. Best effort: a run that ends while no Kinetiq tab is open is not recorded.
 
+### 7.5 Machine settings (Kinetiq HTTP API, `src/server/fluidnc/`)
+
+`/api/kinetiq/machine-config` (read, save, restart, backups) for the FluidNC config editor. Same auth as §7.4. Endpoints, payloads and errors are in `SETTINGS_EDITOR.md` §3.4.
+
 ---
 
 ## 8. Coordinates interface (Widget 3)
@@ -303,7 +307,6 @@ interface JobRun { status: 'completed' | 'cancelled' | 'error'; startedAt: numbe
 |---|---|
 | Jog one step | `command(port, 'gcode', '$J=G91 G21 X10 F1000', { __sender__: clientId })`: one axis per press, signed distance, `G21` (or `G20` when the UI is in inches), feed in units/min |
 | Cancel jog | `command(port, 'jogCancel')` → real-time `0x85` (`GrblController.js:1515-1518`) |
-
 | Go to (one axis) | `command(port, 'gcode', '$J=G90 G21 X11 F1000', ctx)`: absolute jog in work coordinates at the jog feed |
 | Zero (one axis) | `command(port, 'gcode', 'G10 L20 P1 X0', ctx)`: P from the active WCS (G54 → 1 … G59 → 6), same as the CNCjs Axes widget |
 | Home (one axis) | `writeln(port, '$HX', ctx)`: FluidNC single-axis homing; direct write so it works from Alarm (the Feeder drops lines in Alarm) |
@@ -316,15 +319,20 @@ interface JobRun { status: 'completed' | 'cancelled' | 'error'; startedAt: numbe
 4. The firmware rejects it in Alarm or outside soft limits, with an `error:` shown in the console.
 5. It can be cancelled.
 
-The `$J=` line reaches the controller unchanged: `gcode-parser` stripped mode keeps it intact. **[Hardware check]** for FluidNC acceptance (`BACKEND_INTEGRATION.md` F9).
+The `$J=` line reaches the controller unchanged: `gcode-parser` stripped mode keeps it intact. Relative jogging was confirmed on FluidNC v4.0.1 by the operator (2026-11-08); absolute `$J=G90` and `0x85` are still **[Hardware check]** (`BACKEND_INTEGRATION.md` F9).
 
 **Guard [Kinetiq-derived]:** jog controls are enabled only when all of the following hold:
 - connected and controller ready;
 - `workflow === 'idle'`;
 - `activeState ∈ { 'Idle', 'Jog' }`;
-- no other jog line pending (`feeder:status.pending === false`).
+- no other jog line pending (`feeder:status.pending === false`);
+- no Kinetiq sequence running (Probe Z, height-map probing, settings operation).
 
-The last condition stops repeated clicks from piling up moves. In every other state the controls are disabled and show the reason ("Alarm: unlock with $X", "Job running", …).
+The Feeder condition stops repeated clicks from piling up moves. In every other state the controls are disabled and show the reason ("Alarm — use Home or Unlock in the top bar first", "Jog is disabled while a job is running or paused", …).
+
+### 9.1 Probing sequences (Probe Z, height map)
+
+Probe Z (`lib/cnc/probe.ts`) and height-map probing (`lib/leveling/run.ts`, `BED_LEVELING.md`) use the same Feeder path as jogging, one line at a time (`lib/cnc/lineSequence.ts`): `command(port, 'gcode', line, ctx)`, and the next line is sent only after this line's `ok` arrives on `serialport:read`. A `G38.2` step must also see a `[PRB:x,y,z:1]` report before its `ok`. The sequence stops at the first `error:`, `ALARM:`, probe report without contact, timeout or lost connection; cancel sends `feedhold`, then `reset` 400 ms later. Queueing a whole probe program at once would be unsafe: the Feeder keeps sending after an `error:`. Probe Z sends `G21 G91`, `G38.2 Z-<maxTravel> F<fast>`, `G0 Z<backoff>`, `G38.2 Z-<backoff+1> F<slow>`, `G90`, `G10 L20 P<wcs> Z<thickness>`, `G91 G0 Z<retract>`, then restores the previous distance and units mode.
 
 ---
 
@@ -345,4 +353,4 @@ Observed on FluidNC v4.0.1: feed hold (`!`) on an **idle** machine puts FluidNC 
 
 ## 11. Not used by Kinetiq v1 (exists in the backend)
 
-`macro:run`, `macro:load`, `watchdir:load`, `tool:change`, `autolevel:*`, `feedOverride`, `spindleOverride`, `rapidOverride`, `lasertest:*`, `sleep`, `statusreport`, `feeder:feed`, `feeder:start`, `feeder:stop`, and the CNCjs REST API (`/api/*`, not mounted).
+`macro:run`, `macro:load`, `watchdir:load`, `autolevel:*`, `rapidOverride`, `sleep`, `statusreport`, `feeder:feed`, `feeder:start`, `feeder:stop`, the `write` event, and the CNCjs REST API (not carried over). `tool:change` and `lasertest:*` were removed from the embedded backend (2026-11-08, `src/server/cnc/README.md`).

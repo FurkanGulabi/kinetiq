@@ -66,6 +66,8 @@
 
 **Expected output:** the full layout with empty or disconnected states in every panel.
 
+**Progress:** implemented 2026-11-08 together with M4; the grid was replaced on 2026-11-09 by the full-window 3D view with floating glass widgets (`ARCHITECTURE.md` §10.1). **Not built:** the per-widget error boundary.
+
 **Acceptance criteria**
 - The layout matches §10.1 at 1440×900 and stays usable at 1280×720 without page scrolling.
 - Every interactive element is reachable with Tab and shows the accent focus ring.
@@ -111,7 +113,7 @@
 
 **Expected output:** a working Coordinates and Jog widget.
 
-**Progress (2026-11-08):** implemented in `src/components/position/PositionPanel.tsx` (gating in `derive.jogView`, line builder in `commands.jogLine`), together with the M2 workspace grid and the `Panel`, `SegmentedControl` and `Readout` primitives; Job and Console are empty panels for now. **Observed on the controller (FluidNC v4.0.1), without motion:** readouts match the status reports (work Z −22.603 = MPos 0 − WCO 22.603), units `mm` from `$13=0`, WCS `G54`; jog buttons disable with a stated reason in Alarm and in `Hold:0`; the custom feed rejects out-of-range values. **Not yet exercised:** an actual jog move and Stop-jog (`0x85`) on FluidNC — this needs the operator, the work area clear and the E-stop within reach.
+**Progress (2026-11-08):** implemented in `src/components/position/PositionPanel.tsx` (gating in `derive.jogView`, line builder in `commands.jogLine`), together with the M2 workspace grid and the `Panel`, `SegmentedControl` and `Readout` primitives; Job and Console are empty panels for now. **Observed on the controller (FluidNC v4.0.1), without motion:** readouts match the status reports (work Z −22.603 = MPos 0 − WCO 22.603), units `mm` from `$13=0`, WCS `G54`; jog buttons disable with a stated reason in Alarm and in `Hold:0`; the custom feed rejects out-of-range values. **Not yet exercised:** an actual jog move and Stop-jog (`0x85`) on FluidNC — this needs the operator, the work area clear and the E-stop within reach. **Update (same day):** the operator jogged with the jog pad and confirmed it works (`hardware/2026-11-08-m1-fluidnc.md`); Stop-jog (`0x85`), Go to, Zero and single-axis Home are still not exercised on hardware.
 
 **Acceptance criteria**
 - Readouts match the `?` status line in the console. Work and machine values differ by exactly the active offset.
@@ -167,6 +169,8 @@ Draw the loaded program (`store.program.gcode`) in the 3D view: rapids and feeds
 **Tasks:** SIGINT/SIGTERM handler (`BACKEND_INTEGRATION.md` §5.3); production build and start scripts; token refresh on handshake failure; a review pass that every control's guard matches `CNCJS_ANALYSIS.md` §6.1 and §7 (hazards H1–H6); a long idle session (memory steady, console capped); a README covering the CNCjs build step, starting Kinetiq, and the safety notice (software stop ≠ emergency stop).
 
 **Expected output:** `npm run build && npm start` runs Kinetiq in production mode.
+
+**Progress:** the SIGINT/SIGTERM handler (`closeAllControllers`), the production build and start scripts, the token refresh on handshake failure and the README with the safety notice are implemented (the CNCjs build step no longer exists, D2 revised). **Not recorded yet:** the guard review pass and the 8-hour idle session.
 
 **Acceptance criteria**
 - Ctrl-C on the server closes the serial port cleanly (the board is free for another program). If a job was running, a warning is logged.

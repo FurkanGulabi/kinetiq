@@ -2,7 +2,7 @@
 
 **Project:** Kinetiq: Advanced Motion Control
 **Question:** How does Kinetiq reuse the CNCjs backend while staying a **single Next.js application**?
-**Answer (approved 2026-11-08):** Option B, an **embedded backend runtime through a Next.js custom server**. This is one Node.js process and one package. It hosts the Next.js request handler **and** the unmodified CNCjs `CNCEngine` (Socket.IO 2 + serialport) on the same `http.Server`.
+**Answer (approved 2026-11-08):** Option B, an **embedded backend runtime through a Next.js custom server**. This is one Node.js process and one package. It hosts the Next.js request handler **and** the CNCjs `CNCEngine` (Socket.IO 2 + serialport) on the same `http.Server`. The CNCjs GRBL server code is embedded in `src/server/cnc` with a few documented changes (D2 revised; `src/server/cnc/README.md`).
 
 > **Approved.** D1–D4 (§9) were approved on 2026-11-08. A custom server is an official Next.js feature, not a separate backend; it replaces `next start` with `node dist/server.js`.
 
@@ -47,6 +47,8 @@
 
 ## 3. How CNCjs code gets into Kinetiq
 
+> **Superseded 2026-11-08 (D2 revised):** none of the ways below is used any more. The CNCjs GRBL server code was copied into Kinetiq as JavaScript (`src/server/cnc`, loaded by `src/server/backend.ts`; see `src/server/cnc/README.md`), so there is no fork build and no `cncjs-app` dependency. This section is kept as the record of the original evaluation.
+
 CNCjs is not published as a library, so Kinetiq needs its transpiled server code. Three ways were evaluated:
 
 | Way | Description | Pros | Cons |
@@ -74,13 +76,15 @@ Kinetiq instantiates the `CNCEngine` class itself rather than using the `cncengi
 │                                                                                                   │
 │  http.Server (127.0.0.1:8000)                                                                     │
 │   ├── GET /api/kinetiq/session  ── handled by server.ts → { token } (JWT signed w/ settings.secret)│
+│   ├── /api/kinetiq/jobs/*       ── job library (src/server/jobs.ts)                               │
+│   ├── /api/kinetiq/machine-config/* ── FluidNC config editor (src/server/fluidnc/)                │
 │   ├── /socket.io/*              ── CNCjs CNCEngine (Socket.IO 2.2, JWT handshake)                 │
 │   │                                   └── GrblController ── Sender/Feeder/Workflow ── serialport ──┼──USB──▶ FluidNC (ESP32)
 │   └── everything else           ── Next.js request handler (App Router, single page)              │
 │                                                                                                   │
 └───────────────────────────────────────────────────────────────────────────────────────────────────┘
         ▲                                  ▲
-        │ HTTP (page, assets, session)     │ WebSocket (socket.io-client@2)
+        │ HTTP (page, assets, Kinetiq APIs)│ WebSocket (socket.io-client@2)
         └──────────────── Browser: Kinetiq UI (React client components) ──────────────┘
 ```
 
@@ -88,16 +92,16 @@ Kinetiq instantiates the `CNCEngine` class itself rather than using the `cncengi
 
 CNCEngine requires `?token=<JWT>` at handshake (`socketio-jwt`, `handshake: true`). The token is a JWT signed with `settings.secret`, the same secret the CNCjs bootstrap generates and stores in the rc file. The payload is `{ id, name }`; with no users configured, `{ id: '', name: '' }` is accepted (`api.users.js:74-83`, `access-control.js:39-57`).
 
-Kinetiq's custom server handles **one** path itself, `GET /api/kinetiq/session`, before delegating to Next. It returns a token signed with `jsonwebtoken`, which is already a CNCjs dependency. Next Route Handlers are avoided here because they run in Next's bundled module graph and would not share the engine's `settings` singleton.
+Kinetiq's custom server handles `GET /api/kinetiq/session` itself (plus the job library and machine-config APIs, which require this token as `Authorization: Bearer`), before delegating to Next. It returns a token signed with `jsonwebtoken`, which is already a CNCjs dependency. Next Route Handlers are avoided here because they run in Next's bundled module graph and would not share the engine's `settings` singleton.
 
 Hardening for the endpoint:
-- Bind to `127.0.0.1`.
+- Bind to `127.0.0.1` by default (`KINETIQ_HOST` overrides it; the Host check below still requires a loopback name).
 - Reject requests whose `Host` header is not a loopback name (defends against DNS rebinding).
 - Send no CORS headers.
 
 ### 4.2 Client to server
 
-The browser opens one socket and then uses only the verified events: `list`, `open`, `close`, `command`, `writeln`. The full list is in `API_REFERENCE.md`.
+The browser opens one socket and then uses only the verified events: `list`, `open`, `close`, `command`, `writeln`. The full list is in `API_REFERENCE.md`. Request/response operations that are not part of the CNCjs protocol (job library, FluidNC config) go over Kinetiq's HTTP APIs instead (`API_REFERENCE.md` §7.4–7.5).
 
 ### 4.3 Server to client
 
@@ -109,13 +113,13 @@ The browser opens one socket and then uses only the verified events: `list`, `op
 
 ### 5.1 Startup (`server.ts`)
 
-1. `process.env.NODE_ENV` is set (`development` or `production`). CNCjs `settings` is evaluated on first `require`.
-2. Resolve the rc file to `~/.kinetiqrc`. This is deliberately separate from `~/.cncrc`, so Kinetiq never mixes configuration with an installed CNCjs.
-3. `config.load(rcfile)`. If `config.get('secret')` is missing, generate one and `config.set('secret', …)`, as `server/index.js:59-67` does. Then `settings.secret = config.get('secret')` and `settings.rcfile = rcfile`.
-4. `const app = next({ dev })`, then `await app.prepare()`.
-5. `const server = http.createServer(handler)`, where `handler` serves `/api/kinetiq/session` and passes everything else to `app.getRequestHandler()`.
-6. `engine = new CNCEngine()`, then `engine.start(server, 'Grbl')`. **Only `GrblController` is registered.**
-7. `server.listen(8000, '127.0.0.1')`.
+1. `process.env.NODE_ENV` is set (`development` or `production`). The backend `settings` module is evaluated on first `require`, so `src/server/backend.ts` is imported only after this.
+2. `loadBackend()` (`src/server/backend.ts`): set the log level (`KINETIQ_LOG_LEVEL`, default `info`); resolve the rc file to `KINETIQ_RC` or `~/.kinetiqrc` (created as `{}` with mode 0600 if missing). This is deliberately separate from `~/.cncrc`, so Kinetiq never mixes configuration with an installed CNCjs.
+3. `config.load(rcfile)`. If `config.get('secret')` is missing, generate one and `config.set('secret', …)`, as `server/index.js:59-67` does. Then `settings.secret = config.get('secret')` and `settings.rcfile = rcfile`. `new CNCEngine()` is constructed (not started).
+4. `const server = http.createServer(handler)`, where `handler` serves `/api/kinetiq/session`, `/api/kinetiq/jobs/*` and `/api/kinetiq/machine-config/*`, and passes everything else to Next (503 "Kinetiq is starting" until Next is ready).
+5. `engine.start(server, 'Grbl')`. **Only `GrblController` is registered.**
+6. `const app = next({ dev, hostname, port, httpServer: server })`, then `await app.prepare()` and `app.getRequestHandler()`.
+7. `server.listen(port, hostname)`: `KINETIQ_PORT` (else `PORT`, default `8000`) and `KINETIQ_HOST` (default `127.0.0.1`). Any failure logs `[kinetiq] Failed to start` and exits with code 1.
 
 ### 5.2 Steady state
 
@@ -130,7 +134,7 @@ On SIGINT/SIGTERM:
 3. Close each open controller (`controller.close`) so the port is released cleanly.
 4. `engine.stop()` and exit.
 
-How Kinetiq should reach the open controllers from `server.ts` (through the CNCjs `store` module, or by having the server emit `close` per port) is an implementation detail for M6. It needs no CNCjs change: the `store` module is importable from the build.
+Implemented in `server.ts` and `closeAllControllers()` (`src/server/backend.ts`): it reaches the open controllers through the backend `store` module (`controllers`), closes each one, removes it from the store and destroys it, then calls `engine.stop()` and `app.close()`.
 
 ---
 
@@ -149,11 +153,11 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 | F7 | RX buffer and char counting | Starts at 120 bytes. Grows to `Bf.rx − 8` only if idle and the queue is empty. | No `Bf:` is reported (F6), so the Sender stays at the conservative 120 bytes. Safe; throughput is not a concern at hobby feed rates. | **Hardware: observed** |
 | F8 | Error and alarm codes | Known GRBL codes are decorated with text. Unknown codes are emitted raw (`error:NN`, `ALARM:NN`). | FluidNC extends the error table (codes beyond GRBL 1.1). They display raw; nothing breaks. | Verified (source) |
 | F9 | Jogging | Kinetiq sends `$J=G91 G21 X10 F1000` through `command('gcode')`. Cancel is `command('jogCancel')` → `0x85`. | FluidNC documents GRBL `$J=` jogging and the `0x85` jog cancel. Soft limits reject jogs with an `error:` code. | **Operator-confirmed (2026-11-08):** jog pad works; `0x85` cancel and absolute `$J=G90` not yet exercised |
-| F10 | Real-time commands | `? ! ~ 0x18`, override bytes `0x90–0x9D` | Supported by FluidNC. Kinetiq v1 uses only `! ~ 0x18 0x85`. | Hardware check |
+| F10 | Real-time commands | `? ! ~ 0x18`, override bytes `0x90–0x9D` | Supported by FluidNC. Kinetiq uses `! ~ 0x18 0x85` and the feed/spindle override bytes `0x90–0x94`, `0x99–0x9D` (Job widget). | **Hardware: observed** for `!`, `~`, `0x18` and feed override (`API_REFERENCE.md` §7.1, §10); `0x85` not yet |
 | F11 | Unsolicited status reports | Each `<…>` line updates state | If FluidNC auto-reporting is enabled, extra status lines are harmless. | Verified (source) |
 | F12 | FluidNC `$` extensions (`$CD`, `$LocalFS/*`, `$SD/*`, `$Config/*`) | Not parsed → `others` → console raw | Usable from the console while idle. Large dumps such as `$CD` must not be sent during a job (see hazard H1). | Verified (source) |
 | F13 | Transport | Serial only | FluidNC WiFi, telnet and WebSocket are **not** reachable. USB serial only. | Verified (source) |
-| F14 | Homing and alarm at boot | `homing` → `$H`; `unlock` → `$X` | With homing enabled, FluidNC boots in Alarm. Jogging stays disabled until the operator unlocks or homes (from the console in v1; see decision D4). | Verified (source) |
+| F14 | Homing and alarm at boot | `homing` → `$H`; `unlock` → `$X` | With homing enabled, FluidNC boots in Alarm. Jogging stays disabled until the operator unlocks or homes (the top-bar **Home** / **Unlock** buttons, or the console; see decision D4). | Verified (source) |
 | F15 | Baud rate | Default 115200 | **Observed:** at 115200 every received byte decodes as valid GRBL/FluidNC text (status reports, `$$`, `[GC:…]`, `$I`), which confirms the controller's USB console rate. | **Hardware: observed** |
 
 ---
@@ -161,12 +165,16 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 ## 7. What Kinetiq's backend layer contains (and does not)
 
 **Contains:**
-- `server.ts`: bootstrap (§5.1), the session endpoint (§4.1) and shutdown (§5.3).
-- A `.d.ts` file declaring the three CNCjs modules it loads.
+- `server.ts`: bootstrap (§5.1), routing and shutdown (§5.3).
+- `src/server/backend.ts`: loads the embedded backend (rc file, secret, `CNCEngine`) with small typed interfaces for the modules it uses, and closes controllers on shutdown.
+- `src/server/session.ts`: the session endpoint (§4.1) and the auth check shared by the HTTP APIs.
+- `src/server/jobs.ts`: the job library (`API_REFERENCE.md` §7.4).
+- `src/server/fluidnc/`: the FluidNC config editor API (`SETTINGS_EDITOR.md` §3). It sends `$` commands through `controller.writeln()` one at a time and, for saving, an XModem transfer on the raw port while the controller is in exclusive mode.
+- `src/server/cnc/`: the CNCjs GRBL backend itself (D2, revised).
 
 **Does not contain:**
-- Serial code, streaming code or protocol parsing.
-- A REST API.
+- Its own streaming code or G-code protocol parsing (that stays in the CNCjs code).
+- The CNCjs REST API.
 - Any re-implementation of a CNCjs subsystem.
 
 ---
@@ -180,9 +188,9 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 | U8 | Non-numeric `baudrate` in `open` | **Observed (M1).** `SerialConnection` throws an uncaught `TypeError`. Next's handler keeps the process alive in dev and prod, but the `open` callback never fires. | Kinetiq validates the baud rate on the client before emitting (`client.ts`). |
 | U9 | No banner on connect (F1/F3) | The Connection widget cannot show the firmware until a `$I` reply passes through | **Decision pending:** have Kinetiq send a read-only `$I` once when the controller is ready, or leave identification to the console. |
 | U10 | Dev-only: hot reload of `src/lib/cnc/client.ts` resets its module state while the page keeps the old socket, so actions silently do nothing until a page reload (observed in M1) | Development only | Reload the page after editing `client.ts`, or keep the socket on `globalThis` in dev. |
-| U3 | FluidNC hardware checks | F1, F2, F3, F4, F6, F7 and F15 were **observed on 2026-11-08** with FluidNC v4.0.1. F9 and F10 (jogging, real-time commands) remain for M4/M5. | — |
+| U3 | FluidNC hardware checks | F1, F2, F3, F4, F6, F7 and F15 were **observed on 2026-11-08** with FluidNC v4.0.1. F9 and F10 are partly observed (relative jogging, hold/resume/reset, feed override); absolute jog and `0x85` remain. | — |
 | U4 | Socket.IO 2.2 and Engine.IO 3 are old and carry published advisories (for example permissive default CORS before socket.io 2.4) | Local-only deployment limits exposure. The JWT handshake still applies. | Bind to loopback and add the Host-header check. Upgrading belongs in the fork, not in Kinetiq. |
-| U5 | `CNCJS-fork` must be built before Kinetiq can run | Extra setup step | Documented in M1. Optionally a `predev` script that checks `dist/cncjs/server` exists. |
+| U5 | `CNCJS-fork` must be built before Kinetiq can run | **Resolved (2026-11-08):** the backend is embedded in `src/server/cnc` (D2 revised); `npm install` is the only setup step. | — |
 | U6 | `ignoreErrors` key mismatch (`state.controller.exception.ignoreErrors` vs the default `controller.exception.ignoreErrors`) | None (the safe default holds) | Leave as is. Kinetiq never sets either key. |
 | U7 | `remainingTime` is a line-count extrapolation | Inaccurate on uneven programs | Shown as "≈ estimate" (see `API_REFERENCE.md` §7). A better estimator is a future feature. |
 

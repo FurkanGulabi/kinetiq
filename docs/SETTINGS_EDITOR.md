@@ -47,10 +47,10 @@ All of these are only allowed when the machine is **Idle or Alarm** and no job i
 
 ```
 Browser                                   Kinetiq server                         FluidNC
-SettingsDialog ──HTTP──▶ /api/kinetiq/machine-config/* ──▶ FluidncSession ──serial──▶ $ commands
-   (form + YAML)          (src/server/machineConfig.ts)      (exchange + xmodem)  ◀── lines … ok
+SettingsEditor ──HTTP──▶ /api/kinetiq/machine-config/* ──▶ exchange.ts ──serial──▶ $ commands
+   (form + YAML)   (src/server/fluidnc/machineConfig.ts)   (+ xmodem.ts)      ◀── lines … ok
                                    │
-                                   └── ~/.kinetiq/config-backups/   (copy taken before every write)
+                                   └── ~/.kinetiq/config-backups/   (copy taken before every write; KINETIQ_CONFIG_BACKUP_DIR)
 ```
 
 ### 3.1 Why HTTP and not new socket events
@@ -70,36 +70,36 @@ These are request/response operations that take 0.2–10 s and return one result
 GRBL replies strictly in order, so this is enough for read commands. The capture showed no mixing, but the server shouldn't rely on that.
 
 **Exclusive mode for XModem (the only change to `src/server/cnc`).** A binary transfer must not get a `?` byte from the status poll in the middle of it. Two small, documented hooks in `GrblController`:
-- `controller.setExclusive(true|false)`: while it's on, the query timer skips `?`/`$G`, and Feeder/Sender writes are refused (logged).
+- `controller.setExclusive(true|false)`: while it's on, the query timer skips `?`/`$G`, and Feeder lines are dropped (the Feeder is reset, logged). Turning it off clears the query masks so polling resumes.
 - The transfer itself reads raw bytes from `controller.connection.port` alongside the line parser, and writes raw bytes to it directly.
 
 FluidNC's `[MSG:INFO: Received N bytes]` after the transfer is read as a normal line again. This change gets noted in `src/server/cnc/README.md` like the earlier ones.
 
-**Known side effect to fix in S1.** CNCjs's settings parser matches any `$…=…` line. So replies like `$Config/Filename=config.yaml` and `$/axes/x/steps_per_mm=400.000` end up as fake entries in `controller:settings`. `session.ts` will remove keys starting with `$/` or `$Config` from `runner.settings` after an exchange, or the frontend will ignore them. Either way, Kinetiq's GRBL settings display stays clean.
+**Settings-parser cleanup (done in S1).** CNCjs's settings parser matches any `$…=…` line. So replies like `$Config/Filename=config.yaml` and `$/axes/x/steps_per_mm=400.000` would end up as fake entries in `controller:settings`. After an exchange, `exchange.ts` keeps only numeric GRBL settings (`$0`…`$255`) in `runner.settings`, and the controller broadcasts the cleaned object on its next tick.
 
 ### 3.3 Backups
-- Before every write, the current saved file (read with `$LocalFS/Show`, not from the browser) is saved to `~/.kinetiq/config-backups/<ISO-time>-<file>`, mode 0600. The newest 20 are kept.
+- Before every write, the current saved file (read with `$LocalFS/Show`, not from the browser) is saved to `~/.kinetiq/config-backups/<ISO-time>-<file>` (directory override: `KINETIQ_CONFIG_BACKUP_DIR`), mode 0600. The newest 20 are kept.
 - "Restore backup" is just a write of that text, with the same checks.
 
 ### 3.4 Endpoints (all: loopback Host, Bearer session token, `Cache-Control: no-store`)
 | Method & path | Does | Returns |
 |---|---|---|
-| `GET /api/kinetiq/machine-config` | `$Config/Filename`, `$LocalFS/Show`, `$CD`, `$SS`, `$LocalFS/List` | `{ filename, saved, savedSha256, running, bootLog: [{level, text}], fs: {free, used, total}, firmware, readAt }` |
+| `GET /api/kinetiq/machine-config` | `$Config/Filename`, `$LocalFS/Show`, `$CD`, `$SS`, `$LocalFS/List` | `{ filename, saved, savedSha256, running, bootLog: [{level, text}], fs: {files, free, used, total}, differences: [{path, saved, running}], defaultsCount, readAt }` |
 | `PUT /api/kinetiq/machine-config` body `{ text, baseSha256 }` | Re-reads the file. If its hash ≠ `baseSha256` → 409 (it changed underneath you). Checks free space, writes the backup, uploads to `kinetiq-new.yaml` with XModem, reads it back, then swaps it in: rename the active file to `kinetiq-prev.yaml`, rename the new one to the active name (undoing the first rename if the second fails), read back again, delete the previous file. FluidNC's receiver writes straight into the target file, so uploading to the active name directly could leave it truncated after a failed transfer. | `{ filename, savedSha256, bytes, backup, restartRequired: true }` |
-| `POST /api/kinetiq/machine-config/restart` | `$Bye`, then collects boot messages until the banner plus first status, or 15 s | `{ bootLog, state }` |
+| `POST /api/kinetiq/machine-config/restart` | `$Bye`, then collects boot messages until the FluidNC banner plus a 1.5 s tail, or 25 s | `{ bootLog, banner }` |
 | `POST /api/kinetiq/machine-config/live` body `{ path, value }` (stage S4, not built) | `$<path>=<value>`, then reads the value back | `{ path, value }` |
 | `GET /api/kinetiq/machine-config/backups` | List | `[{ id, filename, size, savedAt }]` |
 | `GET /api/kinetiq/machine-config/backups/<id>` | Backup text | text/plain |
 | `POST /api/kinetiq/machine-config/backups/<id>/restore` | Saves a backup with the same steps as `PUT` (the UI instead loads a backup into the editor, so it goes through review) | as `PUT` |
 
-Errors: `409 busy` (another exchange running), `409 not-idle` (machine/job state), `409 changed` (hash mismatch), `412 not-connected`, `504 timeout`. Each has a human-readable `message`.
+Errors: `409 busy` (another exchange running), `409 not-idle` (machine/job state), `409 changed` (hash mismatch), `412 not-connected`, `504 timeout`, `507 no-space`, `502 upload-failed`, `502 verify-failed` (read-back mismatch), `400`/`413 invalid`, `404 not-found`, `403` (auth). The body is `{ error, code }`, with a human-readable `error`.
 
 ---
 
 ## 4. Frontend
 
 ### 4.1 Where it lives
-A **Settings** button (gear icon) in the top bar, left of the machine controls. It opens a large panel built on Radix Dialog, nearly full height and about 1100 px wide. Kinetiq stays one page, with no navigation.
+A **Settings** button (gear icon) in the top bar, between Leveling and Reset layout, left of the machine controls. It opens a large glass sheet built on a non-modal Radix Dialog, full height below the top bar and up to 1280 px wide (`SettingsPanel.tsx` → `SettingsEditor.tsx`). Kinetiq stays one page, with no navigation.
 
 A normal modal dialog would block the top bar, including Hold and Reset. So this panel sits **below the 48 px top bar** and covers only the workspace. The top bar stays clickable the whole time, so Hold/Reset are always reachable (Principle 5).
 
@@ -126,12 +126,13 @@ A normal modal dialog would block the top bar, including Hold and Reset. So this
 
 - **Form view:** sections taken from the file's own top-level keys. Known fields get typed inputs with units, ranges and help text (§4.3). Unknown keys still show as plain text inputs, so nothing in the file is hidden or lost.
 - **YAML view:** the full saved text in a code editor (plain `<textarea>` with a monospace font and line numbers in v1, no new editor dependency). Form and YAML edit the same document.
+- **Running view:** the `$CD` dump (read-only), next to the saved-vs-running differences.
 - **"Running" hint:** when the `$CD` value differs from the file (for example a field left out of the file that falls back to a default), it shows under the input: "running: 500 (default)".
 - **Pins** (`*_pin`) go under a collapsed "Advanced" group per motor/section, with a warning. They're editable, but never the first thing you see.
 
 ### 4.3 Document model and validation
-- New dependency **`yaml`** (eemeli/yaml). Its `Document` API edits values while **keeping comments, order and formatting**. The form writes through `doc.setIn(path, value)`, and the YAML view is `doc.toString()`. This is the only new dependency.
-- **Field schema:** `src/lib/fluidnc/schema.ts`, generated once from FluidNC's `docs/config_items.yaml` by a small script kept in `scripts/`. It provides type, unit, range, enum values, default and description, and is limited to sections Kinetiq shows in the form: axes/homing/motor, stepping, PWM spindle, probe, top-level. That file comes from FluidNC `main` (v4.1.x), so fields newer than v4.0.1 are marked and never added automatically.
+- **As built (S2):** the text is the single source of truth (`src/lib/fluidnc/configText.ts`). A form edit replaces only the value on one line (or inserts one line), so **comments, order and formatting are kept** and the diff shows only real changes. The new dependency **`yaml`** (eemeli/yaml) is used for syntax checking and for the saved-vs-running comparison on the server, not for writing. It is the only new dependency.
+- **Field schema:** `src/lib/fluidnc/schema.json`, generated from FluidNC's `docs/config_items.yaml` by `scripts/build-fluidnc-schema.mjs`. It provides type, range, enum values, default and description for every config field (about 490, pinned to FluidNC commit `e928c5e1db`); units come from `configText.unitFor()`. That file comes from FluidNC `main` (newer than v4.0.1), so a few fields may not exist on the machine's firmware; none are added automatically.
 - **Checks before "Review & save" is enabled:**
   1. The YAML parses, with no tabs and consistent indentation (FluidNC requires spaces).
   2. Types and ranges match the schema.
@@ -149,8 +150,9 @@ A normal modal dialog would block the top bar, including Hold and Reset. So this
 The Settings button stays visible. The dialog opens, but read/save are **disabled with a stated reason**, following the existing `disabledReason` pattern:
 - "Connect to the controller first"
 - "Not available while a job is running or paused"
-- "Machine is moving (Jog/Home/Run): wait until Idle"
-- "Another settings operation is in progress"
+- "Machine is Jog: wait until it is Idle" (any state other than Idle or Alarm)
+- "Waiting for the previous command to be accepted"
+- "Settings operation in progress" / "Probing in progress" / "Height-map probing in progress" (`derive.busyReason`); the server answers a second concurrent request with 409 "Another settings operation is in progress"
 
 While the dialog has an operation running, jog and job Start are disabled with "Settings operation in progress".
 

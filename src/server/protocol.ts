@@ -326,11 +326,6 @@ export interface ServerEvents {
   'task:finish': (taskId: string, code: number | null) => void;
   /** rc `events` shell task failed to spawn; `err` arrives as a plain object. ALL sockets. Unused by the UI. */
   'task:error': (taskId: string, err: unknown) => void;
-  /**
-   * The rc file changed on disk; the payload is the WHOLE rc config object. ALL sockets. Unused
-   * by the UI.
-   */
-  'config:change': (config: Record<string, unknown>) => void;
 }
 
 export type ServerEventName = keyof ServerEvents;
@@ -355,7 +350,6 @@ export const SERVER_EVENTS = [
   'task:start',
   'task:finish',
   'task:error',
-  'config:change',
 ] as const satisfies readonly ServerEventName[];
 
 // ---------------------------------------------------------------------------------------------

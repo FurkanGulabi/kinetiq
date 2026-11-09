@@ -52,12 +52,9 @@ class CNCEngine {
         if (this.io) {
           this.io.emit('task:error', ...args);
         }
-      },
-      configChange: (...args) => {
-        if (this.io) {
-          this.io.emit('config:change', ...args);
-        }
       }
+      // Kinetiq: no configChange listener. CNCjs broadcast the whole rc config on every change,
+      // including the JWT `secret`, as 'config:change' to every socket; the UI never used it.
     };
 
     server = null;
@@ -99,7 +96,6 @@ class CNCEngine {
       taskRunner.on('start', this.listener.taskStart);
       taskRunner.on('finish', this.listener.taskFinish);
       taskRunner.on('error', this.listener.taskError);
-      config.on('change', this.listener.configChange);
 
       // System Trigger: Startup
       this.event.trigger('startup');
@@ -341,7 +337,6 @@ class CNCEngine {
       taskRunner.removeListener('start', this.listener.taskStart);
       taskRunner.removeListener('finish', this.listener.taskFinish);
       taskRunner.removeListener('error', this.listener.taskError);
-      config.removeListener('change', this.listener.configChange);
     }
 }
 

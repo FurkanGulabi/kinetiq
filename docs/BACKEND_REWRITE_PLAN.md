@@ -43,6 +43,7 @@ Found while typing the protocol (`src/server/protocol.ts`). Fixing them changes 
 1. **`config:change` broadcasts the JWT secret.** When the rc file changes on disk, `CNCEngine.js` emits the whole config, including `secret`, to every connected socket (the fake controller rewrites the rc file, so this fires in `dev:fake`). Only already-authenticated loopback clients receive it. Fix: drop the event (the UI does not listen to it) or redact `secret`.
 2. **Reopen does not unload a leftover program.** `GrblController.js` calls `this.command('unload')` on open, but the handler is `gcode:unload`; the server logs "Unknown command: unload" and the old program stays loaded. Fix: call `gcode:unload`.
 3. **`%wait` typed in the console holds the Sender, not the Feeder** (`GrblController.js`, Feeder `dataFilter`). Ported as-is; revisit in phase 3.
+4. **Extended real-time bytes go out UTF-8 encoded.** `write()` takes a JS string, so jog cancel reaches the port as `0xC2 0x85` and every feed/spindle override as `0xC2 0x9X` (visible in `baseline/02-jog.trace` and `05-overrides.trace`). Check how FluidNC handles the `0xC2` prefix before changing it; a TS backend writing raw single bytes shows up as a protocol diff and must be accepted deliberately (re-record the baseline) only after a hardware check of jog cancel and overrides.
 
 ## 4. Verification without tests: protocol diff
 
@@ -58,7 +59,7 @@ The fake controller (`scripts/fake-controller.py -v`) logs every line it receive
 8. Settings editor: read config, save (XModem upload, exclusive mode), restart.
 9. A 3×3 bed-leveling run and a compensated job.
 
-A short script drives scenarios 1–7 over the socket so the runs are repeatable; 8–9 run from the UI. Identical serial traffic (apart from the removals in §3) is the acceptance bar for each phase.
+`scripts/protocol-scenarios/` drives all nine over the socket and the settings HTTP API (`npm run protocol:record`), with the fake's `--trace` recording every line, real-time byte and XModem transfer; `npm run protocol:compare` diffs a run against the committed baseline (`scripts/protocol-scenarios/baseline/`, recorded with the JavaScript backend). Identical serial traffic (apart from the removals in §3) is the acceptance bar for each phase.
 
 ## 5. Target structure
 

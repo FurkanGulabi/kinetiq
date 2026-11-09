@@ -12,6 +12,8 @@
     "start": "NODE_ENV=production node dist/server.js",
     "fake-controller": "python3 scripts/fake-controller.py",
     "dev:fake": "KINETIQ_RC=\"${TMPDIR:-/tmp}/kinetiq-fake.rc\" npm run dev",
+    "protocol:record": "tsx scripts/protocol-scenarios/record.mts",
+    "protocol:compare": "node scripts/protocol-scenarios/compare.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {

@@ -19,6 +19,9 @@ const dev = process.env.NODE_ENV !== 'production';
 
 const hostname = process.env.KINETIQ_HOST || '127.0.0.1';
 const port = Number(process.env.KINETIQ_PORT || process.env.PORT || 8000);
+// KINETIQ_HEADLESS=1: backend and HTTP APIs only, no Next.js UI (answers 503). Used by the protocol
+// scenario recorder (scripts/protocol-scenarios) so it starts fast and never shares .next with `npm run dev`.
+const headless = process.env.KINETIQ_HEADLESS === '1';
 
 const log = (msg: string) => console.log(`[kinetiq] ${msg}`);
 
@@ -28,7 +31,6 @@ async function main() {
   const { handleSession, SESSION_PATH } = await import('./src/server/session');
   const { handleJobs, JOBS_PATH } = await import('./src/server/jobs');
   const { handleMachineConfig, MACHINE_CONFIG_PATH } = await import('./src/server/fluidnc/machineConfig');
-  const next = (await import('next')).default;
 
   const { settings, engine, store } = loadBackend();
   log(`CNC backend loaded (config: ${settings.rcfile})`);
@@ -53,7 +55,7 @@ async function main() {
     // Socket.IO requests never reach this handler: Engine.IO (attached by CNCEngine) wraps the
     // server's 'request' listeners and answers /socket.io/* itself.
     if (!handle) {
-      res.writeHead(503).end('Kinetiq is starting');
+      res.writeHead(503).end(headless ? 'Kinetiq is running headless (no UI)' : 'Kinetiq is starting');
       return;
     }
     handle(req, res).catch((err) => {
@@ -67,16 +69,21 @@ async function main() {
   // Only the GRBL controller is registered (FluidNC speaks GRBL-compatible serial).
   engine.start(server, 'Grbl');
 
-  const app = next({ dev, hostname, port, httpServer: server });
-  await app.prepare();
-  const requestHandler = app.getRequestHandler();
-  handle = (req, res) => requestHandler(req, res);
+  let app: { close?: () => Promise<void> } | null = null;
+  if (!headless) {
+    const next = (await import('next')).default;
+    const nextApp = next({ dev, hostname, port, httpServer: server });
+    await nextApp.prepare();
+    const requestHandler = nextApp.getRequestHandler();
+    handle = (req, res) => requestHandler(req, res);
+    app = nextApp;
+  }
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, hostname, () => resolve());
   });
-  log(`Kinetiq ready on http://${hostname}:${port} (${dev ? 'development' : 'production'})`);
+  log(`Kinetiq ready on http://${hostname}:${port} (${dev ? 'development' : 'production'}${headless ? ', headless: no UI' : ''})`);
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
@@ -88,7 +95,7 @@ async function main() {
     server.close();
     await closeAllControllers(store, log);
     engine.stop();
-    await app.close?.();
+    await app?.close?.();
     log('Shutdown complete');
     process.exit(0);
   };

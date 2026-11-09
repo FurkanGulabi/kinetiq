@@ -23,6 +23,7 @@ What it does:
 Needs Python 3.8+ and a POSIX system (macOS, Linux): it uses the standard `pty` module.
 """
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -48,6 +49,9 @@ parser.add_argument('--surface-z', type=float, default=-20.0,
 parser.add_argument('--flat', action='store_true', help='make the probe surface flat')
 parser.add_argument('--probe-miss', action='store_true', help='probing never touches (ALARM:5)')
 parser.add_argument('--verbose', '-v', action='store_true', help='log every line received')
+parser.add_argument('--trace', metavar='FILE',
+                    help='append every received line, real-time byte and XModem transfer to FILE, one record per '
+                         'line with a relative time in ms (protocol diff, scripts/protocol-scenarios)')
 args = parser.parse_args()
 
 VERSION = 'v4.0.1 (fake)'
@@ -141,6 +145,39 @@ def write(text):
 
 def log(*a):
     print(time.strftime('%H:%M:%S'), *a, flush=True)
+
+
+# --- trace (--trace) -------------------------------------------------------------------------------
+# One record per received unit, in arrival order: "<ms since start>\t<record>". A record is a line as
+# received (before handling; bytes outside printable ASCII escaped as \xNN), a real-time byte as a
+# token (<?>, <!>, <~>, <0x18>, <0x85>, ...), or one "XMODEM ..." summary per file transfer instead of
+# its raw blocks. Line buffered, so a reader can follow the file while a scenario runs.
+
+trace_file = open(args.trace, 'a', encoding='utf-8', buffering=1) if args.trace else None
+trace_lock = threading.Lock()
+trace_start = time.monotonic()
+REALTIME_TOKENS = {0x3F: '<?>', 0x21: '<!>', 0x7E: '<~>'}
+
+
+def trace(record):
+    if trace_file is None:
+        return
+    with trace_lock:
+        trace_file.write('%.1f\t%s\n' % ((time.monotonic() - trace_start) * 1000, record))
+
+
+def trace_char(b):
+    if b == 0x5C:
+        return '\\\\'  # a backslash is doubled so escapes stay unambiguous
+    return chr(b) if 0x20 <= b < 0x7F else '\\x%02X' % b
+
+
+def trace_line(data):
+    trace(''.join(trace_char(b) for b in data))
+
+
+def trace_realtime(byte):
+    trace(REALTIME_TOKENS.get(byte, '<0x%02X>' % byte))
 
 
 # --- machine state ---------------------------------------------------------------------------------
@@ -251,15 +288,19 @@ def xmodem_byte(byte):
             data = data.rstrip(bytes([CTRL_Z]))
             files[x['name']] = data.decode(errors='replace')
             x['received'] = len(data)
+            trace('XMODEM %s bytes=%d blocks=%d naks=%d noise=%d sha256=%s' % (
+                x['name'], len(data), x['blocks'], x['naks'], x['noise'], hashlib.sha256(data).hexdigest()[:16]))
             xmodem = None
             x['done'].set()
             return
         if byte == CAN:
+            trace('XMODEM %s cancelled after blocks=%d naks=%d noise=%d' % (x['name'], x['blocks'], x['naks'], x['noise']))
             xmodem = None
             x['received'] = -1
             x['done'].set()
             return
         if byte not in (SOH, STX):
+            x['noise'] += 1
             return  # noise between blocks
         x['started'] = True
     buf.append(byte)
@@ -270,18 +311,21 @@ def xmodem_byte(byte):
     crc = (buf[3 + size] << 8) | buf[4 + size]
     buf.clear()
     if (block + inverse) & 0xFF != 0xFF or crc16(payload) != crc:
+        x['naks'] += 1
         write(bytes([NAK]))
         return
     if block == x['expect'] & 0xFF:
         x['data'] += payload
         x['expect'] += 1
+        x['blocks'] += 1
     write(bytes([ACK]))  # a repeated block is ACKed again but not stored twice
 
 
 def xmodem_receive(name):
     global xmodem
     done = threading.Event()
-    x = {'name': name, 'buf': bytearray(), 'data': bytearray(), 'expect': 1, 'started': False, 'done': done, 'received': 0}
+    x = {'name': name, 'buf': bytearray(), 'data': bytearray(), 'expect': 1, 'started': False, 'done': done, 'received': 0,
+         'blocks': 0, 'naks': 0, 'noise': 0}
     xmodem = x
     for _ in range(16):  # 'C' asks for CRC mode, about every second until the first block
         if x['started'] or done.is_set():
@@ -291,6 +335,7 @@ def xmodem_receive(name):
             break
     if not done.wait(30):
         xmodem = None
+        trace('XMODEM %s timeout after blocks=%d' % (name, x['blocks']))
         return 'error:3'
     if x['received'] < 0:
         return '[MSG:ERR: Xmodem cancelled]\r\nerror:3'
@@ -550,14 +595,18 @@ def reader():
                 xmodem_byte(byte)
                 continue
             if byte == 0x3F:  # ?
+                trace_realtime(byte)
                 write(status_report())
             elif byte == 0x18:  # Ctrl-X soft reset
+                trace_realtime(byte)
                 buf.clear()
                 reboot()
             elif byte in (0x21, 0x7E) or byte >= 0x80:
+                trace_realtime(byte)
                 realtime(byte)
             elif byte in (0x0A, 0x0D):
                 if buf.strip():
+                    trace_line(buf)
                     lines.put(buf.decode(errors='ignore'))
                 buf.clear()
             else:
@@ -569,6 +618,8 @@ threading.Thread(target=worker, daemon=True).start()
 log('Kinetiq fake controller (FluidNC %s)' % VERSION)
 log('  port:    %s -> %s' % (args.link, os.ttyname(slave)))
 log('  rc file: %s' % args.rc)
+if trace_file is not None:
+    log('  trace:   %s' % args.trace)
 log('  start Kinetiq with:  KINETIQ_RC=%s npm run dev   (or: npm run dev:fake)' % args.rc)
 log('  state:   %s, motion x%g, probe surface at Z%g%s%s' % (
     S['state'], args.speed, args.surface_z, ' (flat)' if args.flat else '',

@@ -25,6 +25,7 @@ Options (`npm run fake-controller -- --help`):
 | `--flat` | Flat probe surface |
 | `--probe-miss` | Probing never touches: `ALARM:5` |
 | `-v` | Log every line received |
+| `--trace FILE` | Append every received unit to FILE in arrival order, one record per line: `<ms>\t<record>` (time since start). A record is a line as received (bytes outside printable ASCII as `\xNN`), a real-time byte as a token (`<?>`, `<!>`, `<~>`, `<0x18>`, `<0x85>`, …), or one `XMODEM <file> bytes=… blocks=… naks=… noise=… sha256=…` summary per transfer instead of its blocks. Used by the protocol diff (`scripts/protocol-scenarios/`) |
 | `--link`, `--rc` | Other paths for the port symlink and the rc file |
 
 ## What it answers

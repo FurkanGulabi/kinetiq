@@ -1,9 +1,10 @@
 /**
  * Kinetiq CNC backend bootstrap.
  *
- * The backend in src/server/cnc/ is the CNCjs GRBL server code (CNCEngine, GrblController,
- * Sender, Feeder, Workflow, SerialConnection, config/store/logger services) carried over
- * verbatim as JavaScript, minus the Marlin/Smoothie/TinyG controllers and the Express app.
+ * The backend is the CNCjs GRBL server code, being rewritten into TypeScript in phases
+ * (docs/BACKEND_REWRITE_PLAN.md): CNCEngine is still JavaScript in src/server/cnc/; the
+ * controller (src/server/controller/), Sender/Feeder/Workflow, SerialConnection and the
+ * config/store/logger services are TypeScript. No Marlin/Smoothie/TinyG controllers, no Express app.
  * This file does what CNCjs's server/index.js did for it: load the rc file and the secret.
  *
  * SERVER-ONLY: never import this file from src/app, src/components or src/lib.
@@ -33,8 +34,10 @@ interface ConfigStore {
   set(key: string, value: unknown): void;
 }
 
+/** The parts of the controller (src/server/controller/GrblController.ts) used on shutdown. */
 interface CNCControllerLike {
-  isOpen(): boolean;
+  /** null (falsy) when there is no connection (CNCjs quirk). */
+  isOpen(): boolean | null;
   close(callback: (err?: unknown) => void): void;
   destroy(): void;
   workflow?: { state: string } | null;

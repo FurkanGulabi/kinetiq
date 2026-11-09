@@ -14,10 +14,12 @@
 import type { EventEmitter } from 'node:events';
 import type { RawPort } from './xmodem';
 
+/** The parts of the controller (src/server/controller/GrblController.ts) this module uses. */
 export interface FluidncController {
-  isOpen(): boolean;
+  /** null (falsy) when there is no connection (CNCjs quirk). */
+  isOpen(): boolean | null;
   writeln(data: string, context?: Record<string, unknown>): void;
-  /** Kinetiq hook in GrblController: pause polling and Feeder writes (XModem transfer). */
+  /** Kinetiq hook in GrblController: pause polling and drop Feeder lines (XModem transfer). */
   setExclusive(exclusive: boolean): void;
   connection: (EventEmitter & { port?: RawPort | null }) | null;
   workflow: { state: string } | null;

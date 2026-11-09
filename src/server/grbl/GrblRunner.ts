@@ -2,8 +2,8 @@
  * Turns controller lines into the runner state/settings objects and per-line events
  * (was src/server/cnc/controllers/Grbl/GrblRunner.js, CNCjs 1.11.5).
  *
- * GrblController feeds every received line to parse(). Each non-empty line emits 'raw' and then at
- * most one of:
+ * GrblController (src/server/controller/GrblController.ts) feeds every received line to parse().
+ * Each non-empty line emits 'raw' and then at most one of:
  *   'status'      `<…>` status report        (state.status updated)
  *   'ok'          ok
  *   'error'       error:N                    (EventEmitter throws if nobody listens, as in CNCjs)
@@ -44,13 +44,16 @@ import {
  * complete GrblParserState.
  */
 export interface GrblRunnerParserState {
-  modal: GrblParserStatePayload['modal'];
-  tool: string | undefined;
-  feedrate: string | undefined;
-  spindle: string | undefined;
+  modal?: GrblParserStatePayload['modal'];
+  tool?: string;
+  feedrate?: string;
+  spindle?: string;
 }
 
-/** `runner.state`; GrblState (protocol.ts) is assignable to it. */
+/**
+ * `runner.state`. GrblState (protocol.ts) is assignable to it; the controller narrows it to
+ * GrblState for the `controller:state` emit (only coolant is ever an array on real firmware).
+ */
 export interface GrblRunnerState {
   status: GrblStatus;
   parserstate: GrblRunnerParserState;

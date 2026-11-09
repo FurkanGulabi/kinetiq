@@ -8,6 +8,7 @@
  */
 import events from 'events';
 import type { FeederStatus, HoldReason } from '../protocol';
+import ensureArray from '../util/ensureArray';
 
 /** The context given to `feed()`; handed to the dataFilter and the 'data' event. */
 export type FeederContext = Record<string, unknown>;
@@ -35,15 +36,6 @@ export interface FeederState {
   pending: boolean;
   changed: boolean;
 }
-
-// Kinetiq: plain-TS copy of ensure-type's ensureArray(value) (default value []): null/undefined
-// become [], an array is returned as is, anything else is wrapped by [].concat(value).
-const ensureArray = <T>(value: T | T[] | null | undefined): T[] => {
-  if (value === undefined || value === null) {
-    return [];
-  }
-  return Array.isArray(value) ? value : ([] as T[]).concat(value);
-};
 
 class Feeder extends events.EventEmitter {
   state: FeederState = {
@@ -73,9 +65,9 @@ class Feeder extends events.EventEmitter {
   toJSON(): FeederStatus {
     return {
       hold: this.state.hold,
-      // CNCjs quirk: undefined after hold() without a reason (protocol.ts FeederStatus says
-      // `HoldReason | null`; the key is then dropped from the JSON payload).
-      holdReason: this.state.holdReason as HoldReason | null,
+      // CNCjs quirk: undefined after hold() without a reason; the key is then dropped from the
+      // JSON payload (protocol.ts FeederStatus.holdReason is optional for that reason).
+      holdReason: this.state.holdReason,
       queue: this.state.queue.length,
       pending: this.state.pending,
       changed: this.state.changed,

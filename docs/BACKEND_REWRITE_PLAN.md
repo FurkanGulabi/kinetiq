@@ -1,6 +1,6 @@
 # Backend rewrite plan: CNCjs JavaScript → modular TypeScript
 
-Status: branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). **Phase 0 done** (protocol types, recorder, baseline). **Phase 1 done** (removals; bugs 1 and 2 of §3a fixed). **Phase 2 done** (leaf modules in TypeScript; bug 5 of §3a found and fixed). **Phase 3 done** (serial + streaming core in TypeScript; bugs 6–7 of §3a found).
+Status: branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). **Phase 0 done** (protocol types, recorder, baseline). **Phase 1 done** (removals; bugs 1 and 2 of §3a fixed). **Phase 2 done** (leaf modules in TypeScript; bug 5 of §3a found and fixed). **Phase 3 done** (serial + streaming core in TypeScript; bugs 6–7 of §3a found). **Phase 4 done** (GrblController split into `src/server/controller/`; protocol diff identical; bug 8 of §3a found).
 
 ## 1. Why
 
@@ -49,6 +49,7 @@ Found while typing the protocol (`src/server/protocol.ts`). Fixing them changes 
 
 6. **The Sender runs `dataFilter` twice on a line that did not fit in the buffer** (open, ported as-is). The filtered text is kept in `sp.line` and filtered again on the next `next()`, so GrblController's filter (expressions, `%` lines, `populateContext`, M0/M1/M6 hold detection) can run twice for one line. Revisit in phase 4 only with a protocol-diff-visible reason.
 7. **`await this.connection.port.set(...)` does not wait** (open): serialport v10's `set()` is callback-based and returns void (GrblController). Ported as-is.
+8. **`command` looks handlers up on a plain object** (open, found in phase 4, ported as-is). `command(cmd)` indexes an object literal, so an inherited name such as `toString`, `valueOf` or `__proto__` finds an `Object.prototype` member instead of logging "Unknown command": `toString` returns harmlessly, `valueOf`/`hasOwnProperty` throw a TypeError and `__proto__` throws "handler is not a function", inside the socket's `command` handler. Only an authenticated socket can send it. Fix (phase 5, with the engine): look up own properties only (`Object.hasOwn`), so these log "Unknown command" like any other name.
 
 Phase 2–3 also showed where `protocol.ts` is looser than reality (fixed with the controller typing in phases 4–5): `GrblSettings` should be a `type` so `exchange.ts` can accept it; `GrblParserState` fields and modal groups are optional and any group may be an array; `FeederStatus.holdReason` may be absent.
 
@@ -92,6 +93,7 @@ src/server/
     GrblController.ts     # thin coordinator: owns the parts below, socket fan-out
     StatusPoller.ts       # ? and $G query timer, exclusive-mode pause
     JobRunner.ts          # gcode:load/start/pause/resume/stop on Sender + Workflow
+    filters.ts            # Feeder/Sender dataFilters, populateContext, $13 write filter (phase 4 addition)
     commands.ts           # command name → handler table (typed)
   events/
     EventTrigger.ts       # rc `events` → actions (rc file only, never frontend input)

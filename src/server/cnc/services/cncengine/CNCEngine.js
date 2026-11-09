@@ -9,7 +9,7 @@ import settings from '../../../config/settings';
 import store from '../../../store';
 import config from '../../../config/ConfigStore';
 import taskRunner from '../../../events/TaskRunner';
-import GrblController from '../../controllers/Grbl/GrblController';
+import GrblController from '../../../controller/GrblController';
 import { GRBL } from '../../../grbl/constants';
 import {
   authorizeIPAddress,

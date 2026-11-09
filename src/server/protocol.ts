@@ -1,12 +1,13 @@
 /**
  * The Socket.IO protocol between the browser and the embedded CNCjs backend, as TypeScript types.
  *
- * Derived from the JS source, which is the source of truth (docs/API_REFERENCE.md describes the
- * same contract in prose):
+ * Derived from the backend source, which is the source of truth (docs/API_REFERENCE.md describes
+ * the same contract in prose):
  *   - src/server/cnc/services/cncengine/CNCEngine.js      socket handlers, startup, list, task/config
- *   - src/server/cnc/controllers/Grbl/GrblController.js   controller events and command() handlers
- *   - src/server/cnc/controllers/Grbl/GrblRunner.js       controller state/settings objects
- *   - src/server/cnc/lib/{Sender,Feeder,Workflow}.js       status payloads
+ *   - src/server/controller/                              controller events and command() handlers
+ *     (GrblController.ts fan-out, commands.ts table; was controllers/Grbl/GrblController.js)
+ *   - src/server/grbl/GrblRunner.ts                       controller state/settings objects
+ *   - src/server/streaming/{Sender,Feeder,Workflow}.ts    status payloads
  *
  * Ground rule of the backend rewrite (docs/BACKEND_REWRITE_PLAN.md §2): event names, payload shapes
  * and command names do not change. Later phases are checked against this file.
@@ -27,7 +28,7 @@
 // Shared building blocks
 // ---------------------------------------------------------------------------------------------
 
-/** The only controller Kinetiq loads (`GRBL` in controllers/Grbl/constants.js). */
+/** The only controller Kinetiq loads (`GRBL` in src/server/grbl/constants.ts). */
 export type ControllerType = 'Grbl';
 
 export type Axis = 'x' | 'y' | 'z' | 'a' | 'b' | 'c';
@@ -62,7 +63,7 @@ export interface HoldReason {
 }
 
 // ---------------------------------------------------------------------------------------------
-// controller:state / controller:settings (GrblRunner.js)
+// controller:state / controller:settings (src/server/grbl/GrblRunner.ts)
 // ---------------------------------------------------------------------------------------------
 
 export interface GrblStatus {
@@ -99,28 +100,37 @@ export interface GrblStatus {
 }
 
 /**
- * `$G` parser state. Each `$G` reply replaces `modal` wholesale with the groups it contained; GRBL
- * and FluidNC always report all of them. Values are the G/M words as strings.
+ * `$G` parser state. Values are the G/M words as strings. It starts as a complete default (all
+ * groups, tool/feedrate/spindle ''), then each `$G` reply replaces it wholesale with exactly what
+ * the line contained (GrblRunner): a field the line lacked becomes undefined, and `modal` holds only
+ * the groups present (absent if the line had no G/M word). GRBL and FluidNC always report
+ * everything, so in practice every field is set.
+ *
+ * Truthfulness note: the parser makes ANY group an array when a `$G` line repeats it, but only
+ * coolant does that on real firmware (['M7', 'M8']). The other groups are typed `string` here so the
+ * browser can use them as words; the server-side type that admits arrays everywhere is
+ * GrblRunnerParserState (src/server/grbl/GrblRunner.ts), narrowed to this one at the socket emit
+ * (src/server/controller/GrblController.ts).
  */
 export interface GrblParserState {
-  modal: {
-    motion: string; // G0 G1 G2 G3 G38.2 G38.3 G38.4 G38.5 G80
-    wcs: string; // G54..G59
-    plane: string; // G17 G18 G19
-    units: 'G20' | 'G21' | string; // G20 inches, G21 millimetres
-    distance: string; // G90 G91
-    feedrate: string; // G93 G94
-    program: string; // M0 M1 M2 M30
-    spindle: string; // M3 M4 M5
+  modal?: {
+    motion?: string; // G0 G1 G2 G3 G38.2 G38.3 G38.4 G38.5 G80
+    wcs?: string; // G54..G59
+    plane?: string; // G17 G18 G19
+    units?: 'G20' | 'G21' | string; // G20 inches, G21 millimetres
+    distance?: string; // G90 G91
+    feedrate?: string; // G93 G94
+    program?: string; // M0 M1 M2 M30
+    spindle?: string; // M3 M4 M5
     /** 'M9', or an array such as ['M7', 'M8'] when both coolants are on. */
-    coolant: string | string[];
+    coolant?: string | string[];
   };
   /** Tool number without the T, e.g. '0'; '' until the first `$G`. */
-  tool: string;
+  tool?: string;
   /** Programmed feed without the F, e.g. '500.0'; '' until the first `$G`. */
-  feedrate: string;
+  feedrate?: string;
   /** Programmed spindle speed without the S; '' until the first `$G`. */
-  spindle: string;
+  spindle?: string;
 }
 
 export interface GrblState {
@@ -147,13 +157,15 @@ export interface GrblParameters {
   PRB?: ProbeParameter;
 }
 
-export interface GrblSettings {
+// A `type` (not an interface) so it is assignable to `Record<string, unknown>`-style shapes such as
+// the FluidNC settings exchange's controller view (src/server/fluidnc/exchange.ts).
+export type GrblSettings = {
   /** From the startup banner, e.g. '3.7' for "Grbl 3.7 [FluidNC …]"; '' until a banner arrives. */
   version: string;
   parameters: GrblParameters;
   /** `$n=value` lines as strings, e.g. { '$13': '0' }. */
   settings: Record<string, string>;
-}
+};
 
 // ---------------------------------------------------------------------------------------------
 // sender:status / feeder:status / workflow:state
@@ -200,8 +212,11 @@ export interface SenderStatus {
 /** `Feeder.toJSON()` (lib/Feeder.js). The Feeder streams manual lines (console, jog). */
 export interface FeederStatus {
   hold: boolean;
-  /** null when not holding; M0/M1/M6 in a manual line hold the Feeder. */
-  holdReason: HoldReason | null;
+  /**
+   * null when not holding; M0/M1/M6 in a manual line hold the Feeder. ABSENT (undefined on the
+   * server) after a hold without a reason (not reachable from the commands Kinetiq sends).
+   */
+  holdReason?: HoldReason | null;
   /** Queued lines. */
   queue: number;
   /** One line is awaiting ok/error. */
@@ -282,7 +297,7 @@ export type SerialPortWriteContext = WriteContext & {
 
 /**
  * Every event the backend emits. "Attached" sockets are those that called `open` for the port
- * (GrblController.addConnection); on attach they get a replay of serialport:open,
+ * (GrblController.addConnection, src/server/controller/GrblController.ts); on attach they get a replay of serialport:open,
  * controller:settings/state, feeder:status, sender:status, gcode:load (if loaded), workflow:state.
  */
 export interface ServerEvents {
@@ -354,6 +369,7 @@ export const SERVER_EVENTS = [
 
 // ---------------------------------------------------------------------------------------------
 // Controller commands: socket.emit('command', port, cmd, ...args) → GrblController.command()
+// (handlers in src/server/controller/commands.ts)
 // ---------------------------------------------------------------------------------------------
 
 /** Override step for feedOverride/spindleOverride. Any other value is silently ignored. */
@@ -394,13 +410,17 @@ export interface ControllerCommands {
   feedOverride: [value: OverrideStep];
   /** 0x99 reset / 0x9A +10 / 0x9B −10 / 0x9C +1 / 0x9D −1. */
   spindleOverride: [value: OverrideStep];
-  /** Queue lines on the Feeder (split on newlines, blanks dropped); one in flight, dropped in Alarm. */
-  gcode: [commands: string | string[], context?: WriteContext];
+  /**
+   * Queue lines on the Feeder (split on newlines, blanks dropped); one in flight, dropped in Alarm.
+   * `commands` may be undefined (an rc `events` entry with trigger 'gcode' and no commands, or a
+   * socket that omits it): nothing is queued.
+   */
+  gcode: [commands: string | string[] | undefined, context?: WriteContext];
 }
 
 export type ControllerCommandName = keyof ControllerCommands;
 
-/** Every command name, in GrblController.command()'s handler order. */
+/** Every command name, in the command table's order (src/server/controller/commands.ts). */
 export const CONTROLLER_COMMANDS = [
   'gcode:load',
   'gcode:unload',

@@ -18,7 +18,7 @@ Open http://127.0.0.1:8000. Keep a hand on the e-stop.
 
 | # | Check | Expected | Result |
 |---|---|---|---|
-| 1 | Connect to the board | Banner in the console, state Idle (or Alarm), positions update about 4×/s | |
+| 1 | Connect to the board | Banner in the console, state Idle (or Alarm), positions update about 4×/s || 2026-11-10 (Claude, no motion): opened `/dev/tty.usbserial-110`, Idle, MPos/WPos and modal state received, `$$` sent once (20 settings). Banner not expected: opening the port does not reset this board |
 | 2 | Unlock / Home (if homing is configured) | `$X` / `$H` accepted, Idle afterwards | |
 | 3 | Jog X, Y, Z with each step size | Moves the commanded distance and direction | |
 | 4 | Long jog, then Stop jog (jog cancel, sent as `0xC2 0x85`, plan §3a bug 4) | Motion stops promptly | |
@@ -27,8 +27,8 @@ Open http://127.0.0.1:8000. Keep a hand on the e-stop.
 | 7 | Pause / Resume mid-job | Feed hold then continue, no lost lines | |
 | 8 | Stop mid-job | Hold, then soft reset; workflow returns to idle; position still correct | |
 | 9 | Probe Z with the touch plate | Touch, retract, Z zero set as before | |
-| 10 | Settings: read config, change one harmless value, save, restart | Saved and running config match after restart; revert the value afterwards | |
-| 11 | Disconnect and reconnect | Reattaches; no leftover program loaded | |
+| 10 | Settings: read config, change one harmless value, save, restart | Saved and running config match after restart; revert the value afterwards || Read only so far (Claude, 2026-11-10): `config.yaml` 1946 B, 0 differences, 809 ms. Save/restart still to do |
+| 11 | Disconnect and reconnect | Reattaches; no leftover program loaded || 2026-11-10 (Claude): closed and reopened, Idle, no `gcode:load`, Sender empty |
 
 ## Afterwards
 

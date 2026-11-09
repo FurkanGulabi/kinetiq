@@ -26,10 +26,15 @@ import argparse
 import json
 import math
 import os
+import sys
+
+if os.name != 'posix':
+    sys.exit('fake-controller.py needs macOS or Linux (it uses the POSIX pty module). '
+             'On Windows run it, and Kinetiq, inside WSL. See docs/FAKE_CONTROLLER.md.')
+
 import pty
 import queue
 import re
-import sys
 import tempfile
 import threading
 import time

@@ -11,7 +11,7 @@
     "build": "next build && tsc -p tsconfig.server.json",
     "start": "NODE_ENV=production node dist/server.js",
     "fake-controller": "python3 scripts/fake-controller.py",
-    "dev:fake": "KINETIQ_RC=\"${TMPDIR:-/tmp}/kinetiq-fake.rc\" npm run dev",
+    "dev:fake": "node scripts/dev-fake.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {

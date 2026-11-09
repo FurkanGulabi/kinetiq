@@ -71,7 +71,7 @@ interface OpenOptions {
 
 "Attached sockets" means every socket that called `open` for this port (`addConnection`). A socket that has not called `open` receives only `startup`, `serialport:list` and the global `serialport:change`.
 
-**Ignored by Kinetiq:** `Grbl:state` and `Grbl:settings` (legacy duplicates), `task:start/finish/error`, `config:change`, `watchdir:change`, `autolevel:update/complete`.
+**Ignored by Kinetiq:** `task:start/finish/error` (rc `events` shell tasks). Removed from the backend (rewrite phase 1, 2026-11-09): `Grbl:state`, `Grbl:settings`, `watchdir:change`, `autolevel:update/complete`, and `config:change` (it broadcast the rc config including the JWT secret). The typed list of every event is `src/server/protocol.ts`.
 
 ---
 
@@ -351,6 +351,8 @@ Observed on FluidNC v4.0.1: feed hold (`!`) on an **idle** machine puts FluidNC 
 
 ---
 
-## 11. Not used by Kinetiq v1 (exists in the backend)
+## 11. Not used by Kinetiq v1
 
-`macro:run`, `macro:load`, `watchdir:load`, `autolevel:*`, `rapidOverride`, `sleep`, `statusreport`, `feeder:feed`, `feeder:start`, `feeder:stop`, the `write` event, and the CNCjs REST API (not carried over). `tool:change` and `lasertest:*` were removed from the embedded backend (2026-11-08, `src/server/cnc/README.md`).
+Still in the backend but unused: the `write` event. Not carried over: the CNCjs REST API.
+
+Removed from the embedded backend: `tool:change` and `lasertest:*` (2026-11-08); `macro:run`, `macro:load`, `watchdir:load`, `autolevel:*` (6), `rapidOverride`, `sleep`, `statusreport`, `feeder:feed`, `feeder:start`, `feeder:stop` and the `start`/`stop`/`pause`/`resume` aliases (rewrite phase 1, 2026-11-09). The authoritative command list is `ControllerCommands` in `src/server/protocol.ts`.

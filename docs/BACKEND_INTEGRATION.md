@@ -105,7 +105,7 @@ The browser opens one socket and then uses only the verified events: `list`, `op
 
 ### 4.3 Server to client
 
-`startup`, `serialport:list`, `serialport:open`, `serialport:close`, `serialport:change`, `serialport:error`, `serialport:read`, `serialport:write`, `controller:state`, `controller:settings`, `sender:status`, `feeder:status`, `workflow:state`, `gcode:load`, `gcode:unload`. The legacy duplicates (`Grbl:state`, `Grbl:settings`) are ignored.
+`startup`, `serialport:list`, `serialport:open`, `serialport:close`, `serialport:change`, `serialport:error`, `serialport:read`, `serialport:write`, `controller:state`, `controller:settings`, `sender:status`, `feeder:status`, `workflow:state`, `gcode:load`, `gcode:unload`. The legacy duplicates `Grbl:state` / `Grbl:settings` were removed from the backend (rewrite phase 1).
 
 ---
 

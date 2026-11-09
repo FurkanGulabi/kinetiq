@@ -1,6 +1,6 @@
 # Backend rewrite plan: CNCjs JavaScript → modular TypeScript
 
-Status: **proposal**, branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). Nothing is rewritten yet.
+Status: branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). **Phase 0 done** (protocol types, recorder, baseline). **Phase 1 done** (removals; bugs 1 and 2 of §3a fixed).
 
 ## 1. Why
 
@@ -36,12 +36,12 @@ Checked against the client (`src/lib/cnc/client.ts`, components) and the server 
 - The rc `events` shell runner (`services/taskrunner`, `lib/EventTrigger.js`) → `events/EventTrigger.ts` + `events/TaskRunner.ts`. The security rule in `src/server/cnc/README.md` carries over unchanged and moves into the new files' headers: commands come only from the rc file, never from socket or HTTP input.
 - Logging stays on `winston` (`logger.ts`, typed wrapper with the same format and levels).
 
-## 3a. Bugs found in Phase 0 (JS behaviour, not yet fixed)
+## 3a. Bugs found in Phase 0
 
 Found while typing the protocol (`src/server/protocol.ts`). Fixing them changes behaviour, so each fix is its own commit in phase 1 and shows up in the protocol diff.
 
-1. **`config:change` broadcasts the JWT secret.** When the rc file changes on disk, `CNCEngine.js` emits the whole config, including `secret`, to every connected socket (the fake controller rewrites the rc file, so this fires in `dev:fake`). Only already-authenticated loopback clients receive it. Fix: drop the event (the UI does not listen to it) or redact `secret`.
-2. **Reopen does not unload a leftover program.** `GrblController.js` calls `this.command('unload')` on open, but the handler is `gcode:unload`; the server logs "Unknown command: unload" and the old program stays loaded. Fix: call `gcode:unload`.
+1. **Fixed in phase 1.** **`config:change` broadcasts the JWT secret.** When the rc file changes on disk, `CNCEngine.js` emits the whole config, including `secret`, to every connected socket (the fake controller rewrites the rc file, so this fires in `dev:fake`). Only already-authenticated loopback clients receive it. Fix: drop the event (the UI does not listen to it) or redact `secret`.
+2. **Fixed in phase 1.** **Reopen does not unload a leftover program.** `GrblController.js` calls `this.command('unload')` on open, but the handler is `gcode:unload`; the server logs "Unknown command: unload" and the old program stays loaded. Fix: call `gcode:unload`.
 3. **`%wait` typed in the console holds the Sender, not the Feeder** (`GrblController.js`, Feeder `dataFilter`). Ported as-is; revisit in phase 3.
 4. **Extended real-time bytes go out UTF-8 encoded.** `write()` takes a JS string, so jog cancel reaches the port as `0xC2 0x85` and every feed/spindle override as `0xC2 0x9X` (visible in `baseline/02-jog.trace` and `05-overrides.trace`). Check how FluidNC handles the `0xC2` prefix before changing it; a TS backend writing raw single bytes shows up as a protocol diff and must be accepted deliberately (re-record the baseline) only after a hardware check of jog cancel and overrides.
 

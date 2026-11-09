@@ -176,29 +176,33 @@ class CNCEngine {
         socket.on('list', () => {
           log.debug(`socket.list(): id=${socket.id}`);
 
-          SerialPort.list()
-            .then(ports => {
-              ports = ports.concat(ensureArray(config.get('ports', [])));
+          const emitPorts = (detected) => {
+            const ports = detected.concat(ensureArray(config.get('ports', [])));
 
-              const controllers = store.get('controllers', {});
-              const portsInUse = Object.keys(controllers)
-                .filter(port => {
-                  const controller = controllers[port];
-                  return controller && controller.isOpen();
-                });
-
-              ports = ports.map(port => {
-                return {
-                  port: port.path,
-                  manufacturer: port.manufacturer,
-                  inuse: portsInUse.indexOf(port.path) >= 0
-                };
+            const controllers = store.get('controllers', {});
+            const portsInUse = Object.keys(controllers)
+              .filter(port => {
+                const controller = controllers[port];
+                return controller && controller.isOpen();
               });
 
-              socket.emit('serialport:list', ports);
-            })
+            socket.emit('serialport:list', ports.map(port => {
+              return {
+                port: port.path,
+                manufacturer: port.manufacturer,
+                inuse: portsInUse.indexOf(port.path) >= 0
+              };
+            }));
+          };
+
+          SerialPort.list()
+            .then(ports => emitPorts(ports))
             .catch(err => {
+              // Kinetiq: detection can fail where udev is missing (containers, minimal Linux:
+              // "spawn udevadm ENOENT"). Still answer, with the ports from the rc file, so the
+              // UI does not wait on "Loading ports..." forever and configured ports stay usable.
               log.error(err);
+              emitPorts([]);
             });
         });
 

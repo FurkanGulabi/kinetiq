@@ -23,7 +23,7 @@ Checked against the client (`src/lib/cnc/client.ts`, components) and the server 
 
 | Remove | Why |
 |---|---|
-| Commands `macro:run`, `macro:load`, `watchdir:load`, `autolevel:*` (4), `sleep`, `rapidOverride`, `feeder:feed/start/stop`, `statusreport`, and the aliases `start`/`stop`/`pause`/`resume` if unused | Never sent by the UI. |
+| Commands `macro:run`, `macro:load`, `watchdir:load`, `autolevel:*` (6), `sleep`, `rapidOverride`, `feeder:feed/start/stop`, `statusreport`, and the aliases `start`/`stop`/`pause`/`resume` if unused | Never sent by the UI. |
 | Events `Grbl:settings`, `Grbl:state`, `autolevel:*`, `watchdir:change` | The UI listens to `controller:*` only. |
 | `services/monitor` (FSMonitor, `watch` dep) | Watch-directory feature, no UI. |
 | `lib/autolevel.js` | Kinetiq has its own bed leveling (`src/lib/leveling`). |
@@ -35,6 +35,14 @@ Checked against the client (`src/lib/cnc/client.ts`, components) and the server 
 - The CNCjs macro language: `[expr]` translation and `%var=` assignments (`lib/evaluate-*.js`, `lib/translate-expression.js`, `esprima`) → `streaming/expressions.ts`, same semantics, with `%wait` / `%msg`. Behaviour is unchanged: bracketed text is still evaluated before a line is sent.
 - The rc `events` shell runner (`services/taskrunner`, `lib/EventTrigger.js`) → `events/EventTrigger.ts` + `events/TaskRunner.ts`. The security rule in `src/server/cnc/README.md` carries over unchanged and moves into the new files' headers: commands come only from the rc file, never from socket or HTTP input.
 - Logging stays on `winston` (`logger.ts`, typed wrapper with the same format and levels).
+
+## 3a. Bugs found in Phase 0 (JS behaviour, not yet fixed)
+
+Found while typing the protocol (`src/server/protocol.ts`). Fixing them changes behaviour, so each fix is its own commit in phase 1 and shows up in the protocol diff.
+
+1. **`config:change` broadcasts the JWT secret.** When the rc file changes on disk, `CNCEngine.js` emits the whole config, including `secret`, to every connected socket (the fake controller rewrites the rc file, so this fires in `dev:fake`). Only already-authenticated loopback clients receive it. Fix: drop the event (the UI does not listen to it) or redact `secret`.
+2. **Reopen does not unload a leftover program.** `GrblController.js` calls `this.command('unload')` on open, but the handler is `gcode:unload`; the server logs "Unknown command: unload" and the old program stays loaded. Fix: call `gcode:unload`.
+3. **`%wait` typed in the console holds the Sender, not the Feeder** (`GrblController.js`, Feeder `dataFilter`). Ported as-is; revisit in phase 3.
 
 ## 4. Verification without tests: protocol diff
 

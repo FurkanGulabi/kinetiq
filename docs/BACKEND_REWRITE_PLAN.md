@@ -1,6 +1,6 @@
 # Backend rewrite plan: CNCjs JavaScript → modular TypeScript
 
-Status: branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). **Phase 0 done** (protocol types, recorder, baseline). **Phase 1 done** (removals; bugs 1 and 2 of §3a fixed). **Phase 2 done** (leaf modules in TypeScript; bug 5 of §3a found).
+Status: branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). **Phase 0 done** (protocol types, recorder, baseline). **Phase 1 done** (removals; bugs 1 and 2 of §3a fixed). **Phase 2 done** (leaf modules in TypeScript; bug 5 of §3a found and fixed). **Phase 3 done** (serial + streaming core in TypeScript; bugs 6–7 of §3a found).
 
 ## 1. Why
 
@@ -47,6 +47,11 @@ Found while typing the protocol (`src/server/protocol.ts`). Fixing them changes 
 
 5. **Fixed after phase 2 (also applied to `main`).** **The macro-language sandbox could run arbitrary code (inherited from CNCjs).** `streaming/expressions.ts` evaluates `[expr]` / `%var=` from any G-code line (job files, console, `%` lines). Member access is not restricted, so `posx.constructor.constructor("…")()` builds a `Function` and reaches `process` — verified with a harmless `typeof process` payload. `Function` and `Object` are also in `GLOBAL_OBJECTS`. A malicious G-code file could therefore execute code on the server. Phase 2 ported this unchanged. Fix (decided 2026-11-09: harden, keep the language): `constructor`, `prototype` and `__…` properties are refused on reads and assignment paths, function expressions are no longer compiled with `Function()`, and `Function`/`Object` left `GLOBAL_OBJECTS`. 14 known escape expressions resolve to `undefined`; ordinary macros (`[posx - 8]`, `[Math.max(…)]`, ternaries) are unchanged; protocol diff identical. `escodegen` was only used for function expressions and is gone.
 
+6. **The Sender runs `dataFilter` twice on a line that did not fit in the buffer** (open, ported as-is). The filtered text is kept in `sp.line` and filtered again on the next `next()`, so GrblController's filter (expressions, `%` lines, `populateContext`, M0/M1/M6 hold detection) can run twice for one line. Revisit in phase 4 only with a protocol-diff-visible reason.
+7. **`await this.connection.port.set(...)` does not wait** (open): serialport v10's `set()` is callback-based and returns void (GrblController). Ported as-is.
+
+Phase 2–3 also showed where `protocol.ts` is looser than reality (fixed with the controller typing in phases 4–5): `GrblSettings` should be a `type` so `exchange.ts` can accept it; `GrblParserState` fields and modal groups are optional and any group may be an array; `FeederStatus.holdReason` may be absent.
+
 ## 4. Verification without tests: protocol diff
 
 The fake controller (`scripts/fake-controller.py -v`) logs every line it receives. Before phase 1, record a baseline with the current JS backend for a fixed set of scenarios, then re-run them after every phase and diff the logs (timestamps stripped):
@@ -72,11 +77,11 @@ src/server/
   protocol.ts             # socket event/command names + payload types, shared with src/lib/cnc
   config/ConfigStore.ts   # rc file (~/.kinetiqrc), typed
   engine/SocketEngine.ts  # was CNCEngine: auth, list/open/close/command/write, port fallback
-  serial/SerialPort.ts    # was SerialConnection
+  serial/SerialConnection.ts  # wraps serialport v10 + ReadlineParser
   grbl/
     constants.ts
     parser/               # GrblLineParser + 14 result parsers → one typed parse() returning a union
-    GrblState.ts          # was GrblRunner (state + settings from parsed lines)
+    GrblRunner.ts         # state + settings from parsed lines
   streaming/
     Sender.ts             # character counting only
     Feeder.ts             # console/jog lines

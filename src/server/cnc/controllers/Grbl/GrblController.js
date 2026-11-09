@@ -5,15 +5,15 @@ import {
 import * as gcodeParser from 'gcode-parser';
 import _ from 'lodash';
 import EventTrigger from '../../../events/EventTrigger';
-import Feeder from '../../lib/Feeder';
+import Feeder from '../../../streaming/Feeder';
 import MessageSlot from '../../../streaming/MessageSlot';
-import Sender, { SP_TYPE_CHAR_COUNTING } from '../../lib/Sender';
-import SerialConnection from '../../lib/SerialConnection';
+import Sender, { SP_TYPE_CHAR_COUNTING } from '../../../streaming/Sender';
+import SerialConnection from '../../../serial/SerialConnection';
 import Workflow, {
   WORKFLOW_STATE_IDLE,
   WORKFLOW_STATE_PAUSED,
   WORKFLOW_STATE_RUNNING
-} from '../../lib/Workflow';
+} from '../../../streaming/Workflow';
 import delay from '../../../util/delay';
 import x from '../../../util/jsonStringify';
 import logger from '../../../logger';
@@ -31,7 +31,7 @@ import {
   WRITE_SOURCE_FEEDER
 } from '../../../constants';
 import { isM0, isM1, isM6, matchBuiltinCommand, replaceM6 } from '../../../streaming/builtins';
-import GrblRunner from './GrblRunner';
+import GrblRunner from '../../../grbl/GrblRunner';
 import {
   GRBL,
   GRBL_ACTIVE_STATE_RUN,

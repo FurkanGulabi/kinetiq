@@ -33,13 +33,13 @@ export function LevelingPanel() {
         </Button>
       </Dialog.Trigger>
       <Dialog.Portal>
-        <div className="kq-overlay fixed inset-x-0 top-12 bottom-0 z-30 bg-black/60" data-state={open ? 'open' : 'closed'} aria-hidden />
+        <div className="kq-scrim fixed inset-x-0 top-12 bottom-0 z-30 bg-black/45" data-state={open ? 'open' : 'closed'} aria-hidden />
         <Dialog.Content
-          className="kq-overlay fixed inset-x-0 top-12 bottom-0 z-30 flex justify-center p-4 outline-none"
+          className="fixed inset-x-0 top-12 bottom-0 z-30 flex justify-center p-4 outline-none"
           onInteractOutside={(e) => e.preventDefault()}
           aria-describedby={undefined}
         >
-          <div className="flex h-full w-full max-w-[1400px] flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-2xl">
+          <div className="kq-sheet glass-sheet flex h-full w-full max-w-[1400px] flex-col overflow-hidden" data-state={open ? 'open' : 'closed'}>
             <LevelingWorkspace />
           </div>
         </Dialog.Content>

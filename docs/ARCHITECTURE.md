@@ -234,6 +234,21 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
   - **No animation** on jog presses beyond press feedback, on readout changes, on console lines, or on state changes of the badge. Under `prefers-reduced-motion` only opacity fades remain.
 - **Focus:** a 2 px `--accent` ring offset by 2 px on `:focus-visible`. Everything is keyboard-reachable.
 - **Contrast mode:** under `prefers-contrast: more`, hairlines become `--ink-3` and `--surface-2` becomes `#24282d`.
+- **Glass and floating chrome (2026-11-09):** see §9.7, which supersedes the flat-panel radius and 1 px gap rules above for the main workspace.
+
+### 9.7 Glass material and floating motion (2026-11-09)
+
+At the user's request the 3D view became the page background and every other region floats above it in a glass material (`globals.css`, apple-design §12 and emil-design-eng).
+
+- **Three weights.** `.glass-bar` (top bar: lightest fill, hairline bottom edge), `.glass` (widgets, toolbar, alert cards: 64 % fill, 20 px blur, 14 px radius, bright 1 px top edge, soft lift shadow), `.glass-sheet` (Settings, Leveling, dialogs: denser fill, 28 px blur, deeper shadow). Inside glass, `--surface`, `--surface-2` and `--line` become translucent and `--ink-3` is lifted to `#848b94` so small labels stay legible over a moving background. Radix Select menus portal outside glass and stay opaque.
+- **Background.** The WebGL canvas is transparent over a soft radial gradient (`.kq-scene-bg`), so the blur has depth to work with.
+- **Accessibility.** `prefers-reduced-transparency` and `prefers-contrast: more` turn every glass surface solid (contrast mode also lifts borders to `--ink-3`). `prefers-reduced-motion` replaces springs, throws, slides and blur with short opacity fades.
+- **Motion values.**
+  - Widget drag: 1:1 with the pointer from the grab point, rubber-band resistance past the viewport edge (`lib/ui/spring.ts`).
+  - Release: momentum projected with Apple's decay formula (rate 0.99), landing point kept on screen and snapped to an edge within 28 px, then independent X/Y springs carry the release velocity (critically damped, response 0.4 s; damping 0.86 after a flick > 400 px/s). Grabbing a moving widget stops it where it is.
+  - Lift while dragging: `scale(1.012)` and a deeper shadow, 180 ms strong ease-out.
+  - Collapse: grid rows `1fr → 0fr` with the content fading and softening (3 px blur), 240 ms strong ease-out; the chevron turns −90°. A widget that grows past the bottom edge moves up as it grows.
+  - Entrance: widgets materialize (opacity, 6 px rise, `scale(0.98)`, blur 6 px → 0) over 320 ms, staggered 50 ms. Sheets materialize the same way at 260 ms over a fading scrim. Alert cards drop 8 px from the top bar.
 
 ### 9.6 Primitives (`src/components/ui/`)
 
@@ -245,7 +260,7 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
 | `StatusBadge` | `neutral`, `ok`, `warn`, `crit` | Always icon + label |
 | `Readout` | `primary`, `secondary` | Mono, tabular, fixed decimals, unit suffix in `--ink-3` |
 | `Meter` | — | Track plus fill, `role="progressbar"`, `aria-valuenow` |
-| `Panel` | — | Title row (label + right-aligned actions) + body |
+| `FloatingWidget` | — | Glass widget: drag by the header, collapse to the header (chevron or double-click) with a compact summary, click to bring to front. Layout in `lib/ui/layout.ts`. |
 | `ConfirmDialog` | — | Radix Dialog; used only for **Stop job** |
 
 ---
@@ -254,34 +269,32 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
 
 ### 10.1 Layout (desktop-first, minimum 1280×720, designed at 1440×900)
 
+> **Changed 2026-11-09:** the fixed grid of flat panels was replaced by a full-window 3D view with floating glass widgets (user request). The earlier grid layout is in the git history.
+
 ```
-┌────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ KINETIQ │ ● Connected /dev/tty.usbserial-110 115200 [Disconnect] FluidNC v4.0.1 │ ◉ IDLE │ [Home][Unlock] │ [‖ Hold][⟲ Reset] │ 48
-├─────────────────────────────────────┬──────────────────────────────────────────────────────────┤
-│ POSITION                 G54 · mm   │ JOB                                        ● Running     │
-│            WORK        MACHINE      │ bracket-v2.nc                                            │
-│   X     120.000        245.000      │ ███████████████████░░░░░░░░░░░░    62%   8,412 / 13,560  │
-│   Y      48.250        148.250      │ STARTED 14:02:11  ELAPSED 0:41:06  REMAINING ≈ 25 min    │
-│   Z      -1.500        -21.500      │ FINISHED —                                               │
-│ ─────────────────────────────────── │ [Load…]                     [▶ Start] [‖ Pause] [■ Stop] │
-│ JOG                                 ├──────────────────────────────────────────────────────────┤
-│           [ Y+ ]          [ Z+ ]    │ CONSOLE                          ◉ Auto-scroll   Clear   │
-│   [ X− ]  [  ■ ]  [ X+ ]            │ 14:01:58  › $$                                           │
-│           [ Y− ]          [ Z− ]    │ 14:01:58    $0=10 (Step pulse time, microseconds)        │
-│                                     │ 14:01:58    ok                                           │
-│ STEP   0.01  0.1  [1]  10  100   mm │ 14:02:03    [MSG:INFO: Homing done]                      │
-│ FEED   100  500  [1000]  3000 mm/min│ 14:02:05  ▲ error:15 (Travel exceeded)                   │
-│                                     │ ┌─────────────────────────────────────────────┐ [Send]   │
-│ Jog disabled: job running           │ │ › Type a command…                           │          │
-└─────────────────────────────────────┴──────────────────────────────────────────────────────────┘
-   fixed 560 px                            flexible; Job auto-height, Console fills the rest
+┌ glass top bar (fixed): KINETIQ │ connection │ ◉ STATE │ Leveling Settings Layout │ Home Unlock │ Hold Reset ┐
+│ ┌ POSITION ───── G54 · mm ┐       (alert cards hang here)          ┌ JOB ─────────── ● Running ┐       │
+│ │ readout, go to, jog,    │                                         │ program, progress, controls│       │
+│ │ step / feed             │        3D VIEW = page background        └────────────────────────────┘       │
+│ │                         │        (frames content in the                                               │
+│ └─────────────────────────┘         area the widgets leave free)    ┌ › PROBE Z ─────── Probe open ┐     │
+│                          [ file · extents │ Iso Top Front │ ⌁ ⇢ │ ⌖ ⤢ ⌫ ]                              │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+- **Layers (back to front):** 3D view (z 0) → status chip and view toolbar (z 5) → widgets (z 10–12, last touched on top) → sheets and their scrim (z 30) → alert cards (z 35) → top bar (z 40) → dialogs (z 40–50).
+- **Widgets:** Position & Jog (560 px), Job (440 px), Probe Z (400 px; split out of the Position panel). Fixed widths. Default slots: Position top-left, Job top-right, Probe Z bottom-right and collapsed (it grows upward when opened). Position, collapsed state and stacking order are remembered per browser (`localStorage` `kinetiq.layout.v1`); **Layout** in the top bar glides them back to their default slots.
+- **Dragging** only from the header, never from controls inside it, so a jog press can never move a widget. A widget is kept fully on screen when it fits, otherwise its header stays visible; shrinking the window pulls widgets back in.
+- **Collapsed widgets keep their status visible:** Position shows work X/Y/Z, Job keeps its status badge plus progress and file name, Probe Z keeps the probe input and the run state.
+- **3D view:** fills the window; Fit and the view presets frame the content in the free area (window minus top bar, toolbar and open widgets on each side). The view toolbar sits at the bottom centre and slides sideways when an open widget reaches into the bottom band.
+- **Sheets:** Settings and Leveling open as large glass sheets below the top bar over a dim scrim (non-modal), so Hold and Reset stay clickable.
 
 **Why this arrangement:**
 - **Connection lives in the top bar.** It is always visible and costs no panel space. Machine state appears **once**, as the header badge, so no widget repeats it.
 - **Safety controls sit at the far right of the top bar.** That is a fixed, predictable location that never scrolls or reflows (apple-design: *familiarity / consistency*).
 - **Position and Jog sit on the left.** It is the hands-on panel, and readout and controls sit together so the operator watches the numbers move while jogging (*grouping & mapping*).
-- **Job sits above the Console.** It is glanceable status that should not be pushed down by log traffic. The Console takes the remaining height for maximum density.
+- **The top bar never moves.** Widgets can be moved, collapsed and stacked, but the top bar (and with it Hold and Reset) is fixed, cannot be collapsed and stays above every widget and sheet.
+- **The machine view is the canvas.** Controls float over it instead of taking strips of it away, and the operator decides what stays open (apple-design: *agency, flexibility*).
 - **No navigation, no tabs, no pages.**
 
 ### 10.2 Widget 1: Connection (top bar)
@@ -296,6 +309,8 @@ Axis identity uses **letters, not colors**. The common X-red/Y-green/Z-blue sche
 | Errors | Inline under the bar, persistent until the next attempt. "Could not open /dev/cu.usbserial-0001. Check that the cable is connected and no other program is using the port." or "Connection lost: the controller may still finish moves it already received." |
 
 ### 10.3 Widget 2: Visualisation (replaces the Console, 2026-11-08)
+
+> **2026-11-09:** the view now fills the window as the page background (§10.1). Its controls moved into a floating glass toolbar at the bottom centre, together with the program name and cut extents; the legend sits at the bottom-left. Fit frames the content in the area the widgets leave free.
 
 At the user's request the Console panel was replaced by a live 3D view of the machine position. The console remains a candidate for a later milestone (manual commands currently go through the top-bar and axis controls).
 
@@ -355,7 +370,7 @@ Order, at the far right of the top bar: **Home · Unlock │ Hold/Resume · Rese
 - **Unlock** (secondary): `$X`. Enabled only in Alarm with the workflow idle. Hover note: machine position may be unknown.
 - **Hold** (warn outline): feed hold, or job pause while running. Always enabled while connected, because status lags up to 250 ms and `!` on an idle machine is harmless. Becomes **Resume** (primary) while the state is Hold/Door or the workflow is paused; disabled during `Hold:1` (decelerating) and `Door:1` (door open).
 - **Reset** (crit outline): soft reset. Always enabled while connected; no confirmation, because hesitation is worse than a reset. Hover note: "Not an emergency stop."
-- **Alarm hint:** while the state is Alarm, a strip under the top bar explains that motion is blocked until Home or Unlock, and that Reset alone does not clear it (observed on the controller).
+- **Alarm hint:** while the state is Alarm, a glass card under the top bar (it cannot be dismissed) explains that motion is blocked until Home or Unlock, and that Reset alone does not clear it (observed on the controller).
 - All controls are hidden while disconnected; their positions never change while connected.
 
 ### 10.7 Empty, disconnected and edge states

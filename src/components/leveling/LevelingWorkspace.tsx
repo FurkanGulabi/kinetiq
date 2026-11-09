@@ -290,7 +290,7 @@ export default function LevelingWorkspace() {
               {active && active !== 'Idle' ? <> (now {active})</> : null}.
             </Check>
             <Check ok={null}>
-              Work X/Y zero at the job origin, and <span className="text-ink">Z0 on the stock surface</span> (use Probe Z in the Position panel).
+              Work X/Y zero at the job origin, and <span className="text-ink">Z0 on the stock surface</span> (use the Probe Z widget).
             </Check>
             <Check ok={touching === null ? null : !touching}>
               Probe clip on the bit and the probe wire on the stock (for PCBs: on the copper). Tap them together: the indicator should change.{' '}

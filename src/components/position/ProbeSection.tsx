@@ -2,10 +2,11 @@
 
 /**
  * Z probe with a touch plate (lib/cnc/probe.ts): live probe input, plate/feed settings,
- * Probe Z with step progress, Cancel, and the result. Collapsible; the open state is remembered.
+ * Probe Z with step progress, Cancel, and the result. Its own floating widget; collapsed, the
+ * header keeps the probe input and the run state visible.
  * Values are always millimetres (the sequence sends G21).
  */
-import { CheckCircle2, ChevronDown, ChevronRight, CircleDot, Info, Loader2, OctagonX, Target, X } from 'lucide-react';
+import { CheckCircle2, CircleDot, Info, Loader2, OctagonX, Target, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { probeView } from '@/lib/cnc/derive';
 import {
@@ -21,8 +22,7 @@ import {
 } from '@/lib/cnc/probe';
 import { useMachine } from '@/lib/cnc/store';
 import { Button } from '@/components/ui/Button';
-
-const OPEN_KEY = 'kinetiq.probe.open';
+import { FloatingWidget } from '@/components/ui/FloatingWidget';
 
 type FieldKey = keyof ProbeSettings;
 
@@ -35,33 +35,10 @@ const FIELDS: { key: FieldKey; unit: string; help: string }[] = [
   { key: 'retract', unit: 'mm', help: 'Lift at the end so you can remove the plate.' },
 ];
 
-function useProbeOpen(): [boolean, (v: boolean) => void] {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    try {
-      setOpen(localStorage.getItem(OPEN_KEY) === '1');
-    } catch {
-      // optional
-    }
-  }, []);
-  return [
-    open,
-    (v: boolean) => {
-      setOpen(v);
-      try {
-        localStorage.setItem(OPEN_KEY, v ? '1' : '0');
-      } catch {
-        // optional
-      }
-    },
-  ];
-}
-
 export function ProbeSection() {
   const machine = useMachine((s) => s);
   const view = probeView(machine);
   const run = machine.probe;
-  const [open, setOpen] = useProbeOpen();
   const [settings, setSettings] = useState<ProbeSettings>(DEFAULT_PROBE_SETTINGS);
   const [texts, setTexts] = useState<Record<FieldKey, string>>(() => toTexts(DEFAULT_PROBE_SETTINGS));
 
@@ -101,26 +78,36 @@ export function ProbeSection() {
       </span>
     );
 
+  const summary = running ? (
+    <span className="flex items-center gap-1.5 truncate text-accent">
+      <Loader2 size={12} className="shrink-0 animate-spin" aria-hidden />
+      Step {run.step} of {run.steps}
+    </span>
+  ) : run.phase === 'done' ? (
+    <span className="flex items-center gap-1.5 truncate text-ok">
+      <CheckCircle2 size={12} className="shrink-0" aria-hidden />
+      Z0 set
+    </span>
+  ) : run.phase === 'failed' ? (
+    <span className="flex items-center gap-1.5 truncate text-crit">
+      <OctagonX size={12} className="shrink-0" aria-hidden />
+      Failed
+    </span>
+  ) : null;
+
   return (
-    <div className="mt-5 border-t border-line pt-4">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          aria-expanded={open}
-          className="pressable panel-label flex items-center gap-1 hover-fine:text-ink"
-        >
-          {open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
-          Probe Z
-        </button>
-        <span className="flex-1" />
+    <FloatingWidget
+      id="probe"
+      index={2}
+      title="Probe Z"
+      summary={summary}
+      actions={
         <span role="status" aria-live="polite" className="text-[12px]">
           {indicator}
         </span>
-      </div>
-
-      {open ? (
-        <div className="mt-3">
+      }
+    >
+        <div>
           <p className="text-[12px] leading-[17px] text-ink-2">
             Put the touch plate on the stock, jog the bit 5–15 mm above it and attach the clip to the bit. Tap the plate against the bit: the indicator
             should switch to “touching”. Probe Z lowers the bit until it touches the plate, sets work Z0 at the stock surface and lifts the bit.
@@ -202,8 +189,7 @@ export function ProbeSection() {
             </Result>
           ) : null}
         </div>
-      ) : null}
-    </div>
+    </FloatingWidget>
   );
 }
 

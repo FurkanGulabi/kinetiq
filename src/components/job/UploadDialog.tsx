@@ -97,8 +97,8 @@ export function UploadDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="kq-overlay fixed inset-0 z-40 bg-black/60" />
-        <Dialog.Content className="kq-dialog fixed top-1/2 left-1/2 z-50 flex max-h-[min(720px,90vh)] w-[600px] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-line bg-surface shadow-2xl">
+        <Dialog.Overlay className="kq-overlay fixed inset-0 z-40 bg-black/50" />
+        <Dialog.Content className="kq-dialog fixed top-1/2 left-1/2 z-50 flex max-h-[min(720px,90vh)] w-[600px] -translate-x-1/2 -translate-y-1/2 flex-col glass-sheet">
           <header className="flex items-start justify-between px-5 pt-5">
             <div>
               <Dialog.Title className="text-[15px] font-semibold text-ink">Load program</Dialog.Title>

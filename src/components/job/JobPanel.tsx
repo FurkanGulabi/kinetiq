@@ -3,6 +3,7 @@
 /**
  * Widget 4: Job Status and job controls (docs/ARCHITECTURE.md §10.5, API_REFERENCE.md §7).
  * State comes from workflow:state + sender:status; gating and timing live in derive.jobView().
+ * Floating widget; collapsed, the header keeps the status badge, progress and file name.
  */
 import { AlertTriangle, FileCode2, FolderOpen, Info, Loader2, Pause, Play, Square, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -22,7 +23,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Meter } from '@/components/ui/Meter';
-import { Panel } from '@/components/ui/Panel';
+import { FloatingWidget } from '@/components/ui/FloatingWidget';
 import { StatusBadge, type BadgeIcon } from '@/components/ui/StatusBadge';
 import { Overrides } from './Overrides';
 import { RecentJobs } from './RecentJobs';
@@ -172,8 +173,24 @@ export function JobPanel() {
   const paused = view.status === 'paused';
 
   return (
-    <Panel
+    <FloatingWidget
+      id="job"
+      index={1}
       title="Job"
+      summary={
+        view.program ? (
+          <>
+            {view.progress && (view.status === 'running' || view.status === 'paused' || view.status === 'error') ? (
+              <span className="shrink-0 font-mono text-ink tabular-nums">{Math.floor(view.progress.percent)}%</span>
+            ) : null}
+            <span className="truncate" title={view.program.name}>
+              {view.program.name}
+            </span>
+          </>
+        ) : (
+          <span className="text-ink-3">No program</span>
+        )
+      }
       actions={
         <StatusBadge
           tone={view.tone}
@@ -426,6 +443,6 @@ export function JobPanel() {
         confirmLabel="Stop job"
         onConfirm={stopJob}
       />
-    </Panel>
+    </FloatingWidget>
   );
 }

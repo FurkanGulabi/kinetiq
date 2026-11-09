@@ -22,8 +22,8 @@ export function ConfirmDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="kq-overlay fixed inset-0 z-40 bg-black/60" />
-        <Dialog.Content className="kq-dialog fixed top-1/2 left-1/2 z-50 w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line bg-surface p-5 shadow-2xl">
+        <Dialog.Overlay className="kq-overlay fixed inset-0 z-40 bg-black/50" />
+        <Dialog.Content className="kq-dialog fixed top-1/2 left-1/2 z-50 w-[400px] -translate-x-1/2 -translate-y-1/2 glass-sheet p-5">
           <Dialog.Title className="text-[15px] font-semibold text-ink">{title}</Dialog.Title>
           <Dialog.Description asChild>
             <div className="mt-2 text-[13px] text-ink-2">{description}</div>

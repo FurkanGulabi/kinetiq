@@ -60,6 +60,31 @@ export const isBlockedKey = (key: unknown): boolean => {
 };
 
 /**
+ * SECURITY (Kinetiq): turns a computed key into the string that is BOTH checked and used, or
+ * `undefined` when it is blocked. The key must be converted exactly once: an object key is
+ * stringified by `obj[key]` again, and an object whose `toString` answers differently each time
+ * (`{toString: [].shift.bind(["a", "constructor"])}`) passed the check as "a" and was then read as
+ * "constructor". Never check a key and then index with the original value.
+ */
+const toSafeKey = (key: unknown): string | undefined => {
+  if (typeof key === 'symbol') {
+    return undefined;
+  }
+  const name = String(key);
+  return isBlockedKey(name) ? undefined : name;
+};
+
+// SECURITY (Kinetiq): the constructors that compile a string into code. Second line of defence
+// behind isBlockedKey: an expression that still reaches one of them gets `undefined`, so it can be
+// neither called nor handed to call / apply / bind.
+const CODE_CONSTRUCTORS: ReadonlySet<unknown> = new Set<unknown>([
+  Function,
+  (async () => {}).constructor,
+  (function* () {}).constructor,
+  (async function* () {}).constructor,
+]);
+
+/**
  * Evaluates an expression (source string or an already parsed ESTree node) against `context`.
  * Returns `undefined` when the expression cannot be resolved (unknown identifier, unsupported
  * node type) or throws (the error is logged).
@@ -197,7 +222,8 @@ export const evaluateExpression = (src: string | ESTree.Node, context?: unknown)
 
     if (node.type === 'Identifier') {
       if (Object.hasOwnProperty.call(vars, node.name)) {
-        return vars[node.name];
+        const value = vars[node.name];
+        return CODE_CONSTRUCTORS.has(value) ? UNRESOLVED : value;
       }
       return UNRESOLVED;
     }
@@ -245,13 +271,19 @@ export const evaluateExpression = (src: string | ESTree.Node, context?: unknown)
         if (isBlockedKey(node.property.name)) {
           return UNRESOLVED; // SECURITY (Kinetiq): see isBlockedKey
         }
-        return (obj as AnyObject)[node.property.name];
+        const value = (obj as AnyObject)[node.property.name];
+        return CODE_CONSTRUCTORS.has(value) ? UNRESOLVED : value;
       }
       const prop = walk(node.property);
-      if (prop === UNRESOLVED || isBlockedKey(prop)) {
+      if (prop === UNRESOLVED) {
+        return UNRESOLVED;
+      }
+      const key = toSafeKey(prop); // converted once: the checked string is the one used below
+      if (key === undefined) {
         return UNRESOLVED; // SECURITY (Kinetiq): see isBlockedKey
       }
-      return (obj as AnyObject)[prop as PropertyKey];
+      const value = (obj as AnyObject)[key];
+      return CODE_CONSTRUCTORS.has(value) ? UNRESOLVED : value;
     }
 
     if (node.type === 'ConditionalExpression') {
@@ -406,9 +438,11 @@ const walkAssignmentExpression = (node: ESTree.AssignmentExpression, vars: unkno
   // CNCjs quirk: the operator is ignored, so `x += 1` behaves like `x = 1`.
   const path = lookupObjectPath(node.left, vars);
   // SECURITY (Kinetiq): never assign through constructor / prototype / __proto__ (see isBlockedKey).
-  if (path && !path.some(isBlockedKey)) {
+  // Each key is converted once (toSafeKey) and lodash gets those strings, not the original values.
+  const keys = path.map(toSafeKey);
+  if (keys.every((key): key is string => key !== undefined)) {
     const value = evaluateExpression(node.right, vars);
-    _set(vars as object, path as PropertyKey[], value);
+    _set(vars as object, keys, value);
   }
 };
 

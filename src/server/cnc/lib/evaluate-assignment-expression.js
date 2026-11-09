@@ -1,6 +1,6 @@
 import _set from 'lodash/set';
 import { parse } from 'esprima';
-import evaluateExpression from './evaluate-expression';
+import evaluateExpression, { isBlockedKey } from './evaluate-expression';
 import logger from './logger';
 
 const log = logger('evaluate-assignment-expression');
@@ -74,7 +74,8 @@ const walkAssignmentExpression = (node, vars) => {
   console.assert(node && node.type === 'AssignmentExpression');
 
   const path = lookupObjectPath(node.left, vars);
-  if (path) {
+  // SECURITY (Kinetiq): never assign through constructor / prototype / __proto__ (see isBlockedKey).
+  if (path && !path.some(isBlockedKey)) {
     const value = evaluateExpression(node.right, vars);
     _set(vars, path, value);
   }

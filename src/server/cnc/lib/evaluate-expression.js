@@ -1,11 +1,23 @@
 /* eslint no-bitwise: 0 */
-import { generate } from 'escodegen';
 import { parse } from 'esprima';
 import logger from './logger';
 
 const log = logger('evaluate-expression');
 
 const UNRESOLVED = Symbol('unresolved');
+
+// SECURITY (Kinetiq): G-code expressions ([expr], %var=) come from job files and the console and must
+// never reach code execution. `constructor` leads from any value to Function; `prototype` and the
+// `__proto__` / `__defineGetter__` family reach shared prototypes. These keys are refused on reads
+// (here) and on assignment paths (evaluate-assignment-expression.js). Function/Object are also not in
+// GLOBAL_OBJECTS (controllers/constants.js).
+export const isBlockedKey = (key) => {
+  if (typeof key === 'symbol') {
+    return true;
+  }
+  const name = String(key);
+  return name === 'constructor' || name === 'prototype' || name.startsWith('__');
+};
 
 const evaluateExpression = (src, vars) => {
   if (!vars || typeof vars !== 'object') {
@@ -171,11 +183,14 @@ const evaluateExpression = (src, vars) => {
         return UNRESOLVED;
       }
       if (node.property.type === 'Identifier') {
+        if (isBlockedKey(node.property.name)) {
+          return UNRESOLVED; // SECURITY (Kinetiq): see isBlockedKey
+        }
         return obj[node.property.name];
       }
       const prop = walk(node.property);
-      if (prop === UNRESOLVED) {
-        return UNRESOLVED;
+      if (prop === UNRESOLVED || isBlockedKey(prop)) {
+        return UNRESOLVED; // SECURITY (Kinetiq): see isBlockedKey
       }
       return obj[prop];
     }
@@ -200,39 +215,10 @@ const evaluateExpression = (src, vars) => {
       return walk(node.argument);
     }
 
+    // SECURITY (Kinetiq): CNCjs compiled function expressions with Function(..., 'return ' + generate(node)),
+    // which ran the body as real JavaScript with full access to the server. Not evaluated any more.
     if (node.type === 'FunctionExpression') {
-      const bodies = node.body.body;
-
-      // Create a "scope" for our arguments
-      const oldVars = {};
-      Object.keys(vars).forEach(element => {
-        oldVars[element] = vars[element];
-      });
-
-      for (let i = 0; i < node.params.length; i++) {
-        const key = node.params[i];
-        if (key.type !== 'Identifier') {
-          return UNRESOLVED;
-        }
-
-        vars[key.name] = null;
-      }
-
-      for (let i in bodies) {
-        if (walk(bodies[i]) === UNRESOLVED) {
-          return UNRESOLVED;
-        }
-      }
-
-      // restore the vars and scope after walk
-      vars = oldVars;
-
-      const keys = Object.keys(vars);
-      const vals = keys.map(key => {
-        return vars[key];
-      });
-
-      return Function(keys.join(', '), 'return ' + generate(node)).apply(null, vals); // eslint-disable-line no-new-func
+      return UNRESOLVED;
     }
 
     if (node.type === 'TemplateLiteral') {

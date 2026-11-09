@@ -1,12 +1,12 @@
 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects
+// SECURITY (Kinetiq): Function and Object (in CNCjs) are left out: Function("...")() runs arbitrary
+// code. See lib/evaluate-expression.js.
 export const GLOBAL_OBJECTS = {
   // Function properties
   parseFloat,
   parseInt,
 
   // Fundamental objects
-  Object,
-  Function,
   Boolean,
 
   // Numbers and dates

@@ -1,12 +1,9 @@
 import {
   ensureArray,
-  ensureFiniteNumber,
   ensureString,
 } from 'ensure-type';
-import fsp from 'fs/promises';
 import * as gcodeParser from 'gcode-parser';
 import _ from 'lodash';
-import * as autolevel from '../../lib/autolevel';
 import EventTrigger from '../../lib/EventTrigger';
 import Feeder from '../../lib/Feeder';
 import MessageSlot from '../../lib/MessageSlot';
@@ -23,7 +20,6 @@ import x from '../../lib/json-stringify';
 import logger from '../../lib/logger';
 import translateExpression from '../../lib/translate-expression';
 import config from '../../services/configstore';
-import monitor from '../../services/monitor';
 import taskRunner from '../../services/taskrunner';
 import store from '../../store';
 import {
@@ -37,7 +33,6 @@ import {
 } from '../constants';
 import * as builtinCommand from '../utils/builtin-command';
 import { isM0, isM1, isM6, replaceM6 } from '../utils/gcode';
-import { in2mm } from '../utils/units';
 import GrblRunner from './GrblRunner';
 import {
   GRBL,
@@ -128,22 +123,6 @@ class GrblController {
 
     // Event Trigger
     event = null;
-
-    // Auto Level - Probe state tracking
-    probeState = {
-      // The probed positions in the form of [{x, y, z}, ...]
-      probedPositions: [],
-
-      // The minimum and maximum Z values among the probed positions
-      minZ: null,
-      maxZ: null,
-
-      // The probe points in the form of [{x, y}, ...]
-      probePoints: [],
-
-      // The probe configuration
-      config: null,
-    };
 
     // Feeder
     feeder = null;
@@ -669,113 +648,6 @@ class GrblController {
 
       this.runner.on('parameters', (res) => {
         this.emit('serialport:read', res.raw);
-
-        const { name, value } = res;
-
-        if (name === 'PRB') {
-          log.debug('[autolevel] PRB parameter received:', value);
-          // Machine position
-          const {
-            x: mposx,
-            y: mposy,
-            z: mposz,
-            a: mposa,
-            b: mposb,
-            c: mposc,
-          } = this.runner.getMachinePosition();
-
-          // Work position
-          const {
-            x: posx,
-            y: posy,
-            z: posz,
-            a: posa,
-            b: posb,
-            c: posc,
-          } = this.runner.getWorkPosition();
-
-          const wco = {
-            x: (Number(mposx) - Number(posx)).toFixed(3),
-            y: (Number(mposy) - Number(posy)).toFixed(3),
-            z: (Number(mposz) - Number(posz)).toFixed(3),
-            a: (Number(mposa) - Number(posa)).toFixed(3),
-            b: (Number(mposb) - Number(posb)).toFixed(3),
-            c: (Number(mposc) - Number(posc)).toFixed(3),
-          };
-
-          // [PRB:0.000,0.000,0.000:0]
-          // The `PRB:` probe parameter message includes an additional `:` and suffix value is a boolean.
-          // It denotes whether the last probe cycle was successful or not.
-          if (value.result === 1) {
-            // $13=1 means Grbl reports positions in inches (including PRB)
-            // PRB units follow $13 (firmware setting), NOT G20/G21 modal state
-            const reportInches = this.runner.settings?.settings?.['$13'] === '1';
-
-            // Convert probe result to work coordinates, then to mm
-            // Probe data is always stored in mm for consistent compensation math
-            const probedPos = {
-              x: ensureFiniteNumber(value.x) - Number(wco.x),
-              y: ensureFiniteNumber(value.y) - Number(wco.y),
-              z: ensureFiniteNumber(value.z) - Number(wco.z),
-            };
-            if (reportInches) {
-              probedPos.x = in2mm(probedPos.x);
-              probedPos.y = in2mm(probedPos.y);
-              probedPos.z = in2mm(probedPos.z);
-            }
-
-            // Track probe data if probing is active
-            log.debug('[autolevel] Checking probe state:', {
-              probePoints: this.probeState.probePoints.length,
-              probedPositions: this.probeState.probedPositions.length,
-              probedPos
-            });
-            if (this.probeState.probePoints.length > 0 && this.probeState.probedPositions.length < this.probeState.probePoints.length) {
-              // Record the measurement at the intended grid node's XY and keep only the
-              // measured Z. The reported XY is quantised by the motor steps (a commanded
-              // Y60 reads back as 59.999), and mixing quantised readings with exact node
-              // values splits one grid line into two 0.001 mm apart: the detected grid
-              // spacing collapses and the lattice fills with holes, so compensation
-              // subdivides every move into thousands of segments over a broken surface.
-              //
-              // Probe points carry the units the probe G-code was emitted in, which is
-              // the modal state -- $13 governs the PRB report only.
-              const isImperial = this.runner.getModalGroup().units === 'G20';
-              const gridNode = this.probeState.probePoints[this.probeState.probedPositions.length];
-              probedPos.x = isImperial ? in2mm(gridNode.x) : gridNode.x;
-              probedPos.y = isImperial ? in2mm(gridNode.y) : gridNode.y;
-
-              const newProbedPositions = [...this.probeState.probedPositions, probedPos];
-              const isCompleted = newProbedPositions.length >= this.probeState.probePoints.length;
-
-              if (this.probeState.probedPositions.length === 0) {
-                this.probeState.minZ = probedPos.z;
-                this.probeState.maxZ = probedPos.z;
-              } else {
-                this.probeState.minZ = Math.min(this.probeState.minZ, probedPos.z);
-                this.probeState.maxZ = Math.max(this.probeState.maxZ, probedPos.z);
-              }
-
-              this.probeState.probedPositions = newProbedPositions;
-
-              log.debug(`[autolevel] Probed ${newProbedPositions.length}/${this.probeState.probePoints.length}: posX=${probedPos.x.toFixed(3)}, posY=${probedPos.y.toFixed(3)}, posZ=${probedPos.z.toFixed(3)}`);
-
-              this.emit('autolevel:update', {
-                current: newProbedPositions.length,
-                total: this.probeState.probePoints.length,
-                probedPos: { ...probedPos },
-                minZ: this.probeState.minZ,
-                maxZ: this.probeState.maxZ,
-                maxDeviation: this.probeState.maxZ - this.probeState.minZ,
-              });
-
-              if (isCompleted) {
-                this.emit('autolevel:complete');
-                log.info('[autolevel] Probing completed');
-              }
-            }
-          }
-        }
       });
 
       this.runner.on('feedback', (res) => {
@@ -927,14 +799,12 @@ class GrblController {
         if (this.settings !== this.runner.settings) {
           this.settings = this.runner.settings;
           this.emit('controller:settings', GRBL, this.settings);
-          this.emit('Grbl:settings', this.settings); // Backward compatibility
         }
 
         // Grbl state
         if (this.state !== this.runner.state) {
           this.state = this.runner.state;
           this.emit('controller:state', GRBL, this.state);
-          this.emit('Grbl:state', this.state); // Backward compatibility
         }
 
         // Kinetiq: no polling while another component has exclusive use of the serial port
@@ -1294,12 +1164,10 @@ class GrblController {
       if (!_.isEmpty(this.settings)) {
         // controller settings
         socket.emit('controller:settings', GRBL, this.settings);
-        socket.emit('Grbl:settings', this.settings); // Backward compatibility
       }
       if (!_.isEmpty(this.state)) {
         // controller state
         socket.emit('controller:state', GRBL, this.state);
-        socket.emit('Grbl:state', this.state); // Backward compatibility
       }
       if (this.feeder) {
         // feeder status
@@ -1376,10 +1244,6 @@ class GrblController {
           this.emit('gcode:unload');
           this.event.trigger('gcode:unload');
         },
-        'start': () => {
-          log.warn(`Warning: The "${cmd}" command is deprecated and will be removed in a future release.`);
-          this.command('gcode:start');
-        },
         'gcode:start': () => {
           this.event.trigger('gcode:start');
 
@@ -1390,10 +1254,6 @@ class GrblController {
 
           // Sender
           this.sender.next();
-        },
-        'stop': () => {
-          log.warn(`Warning: The "${cmd}" command is deprecated and will be removed in a future release.`);
-          this.command('gcode:stop', ...args);
         },
         // @param {object} options The options object.
         // @param {boolean} [options.force] Whether to force stop a G-code program. Defaults to false.
@@ -1420,40 +1280,17 @@ class GrblController {
             }
           }
         },
-        'pause': () => {
-          log.warn(`Warning: The "${cmd}" command is deprecated and will be removed in a future release.`);
-          this.command('gcode:pause');
-        },
         'gcode:pause': () => {
           this.event.trigger('gcode:pause');
 
           this.workflow.pause();
           this.write('!');
         },
-        'resume': () => {
-          log.warn(`Warning: The "${cmd}" command is deprecated and will be removed in a future release.`);
-          this.command('gcode:resume');
-        },
         'gcode:resume': () => {
           this.event.trigger('gcode:resume');
 
           this.write('~');
           this.workflow.resume();
-        },
-        'feeder:feed': () => {
-          const [commands, context] = args;
-          this.command('gcode', commands, context);
-        },
-        'feeder:start': () => {
-          if (this.workflow.state === WORKFLOW_STATE_RUNNING) {
-            return;
-          }
-          this.write('~');
-          this.feeder.unhold();
-          this.feeder.next();
-        },
-        'feeder:stop': () => {
-          this.feeder.reset();
         },
         'feedhold': () => {
           this.event.trigger('feedhold');
@@ -1465,18 +1302,10 @@ class GrblController {
 
           this.write('~');
         },
-        'statusreport': () => {
-          this.write('?');
-        },
         'homing': () => {
           this.event.trigger('homing');
 
           this.writeln('$H');
-        },
-        'sleep': () => {
-          this.event.trigger('sleep');
-
-          this.writeln('$SLP');
         },
         'unlock': () => {
           this.writeln('$X');
@@ -1536,22 +1365,6 @@ class GrblController {
             this.write('\x9d');
           }
         },
-        // Rapid Overrides
-        // @param {number} value A percentage value of 25, 50, or 100. A value of zero will reset to 100%.
-        // 100: Set to 100% full rapid rate.
-        //  50: Set to 50% of rapid rate.
-        //  25: Set to 25% of rapid rate.
-        'rapidOverride': () => {
-          const [value] = args;
-
-          if (value === 0 || value === 100) {
-            this.write('\x95');
-          } else if (value === 50) {
-            this.write('\x96');
-          } else if (value === 25) {
-            this.write('\x97');
-          }
-        },
         'gcode': () => {
           const [commands, context] = args;
           const data = ensureArray(commands)
@@ -1569,241 +1382,6 @@ class GrblController {
 
           if (!this.feeder.isPending()) {
             this.feeder.next();
-          }
-        },
-        'macro:run': () => {
-          let [id, context = {}, callback = noop] = args;
-          if (typeof context === 'function') {
-            callback = context;
-            context = {};
-          }
-
-          const macros = config.get('macros');
-          const macro = _.find(macros, { id: id });
-
-          if (!macro) {
-            log.error(`Cannot find the macro: id=${id}`);
-            return;
-          }
-
-          this.event.trigger('macro:run');
-
-          this.command('gcode', macro.content, context);
-          callback(null);
-        },
-        'macro:load': () => {
-          let [id, context = {}, callback = noop] = args;
-          if (typeof context === 'function') {
-            callback = context;
-            context = {};
-          }
-
-          const macros = config.get('macros');
-          const macro = _.find(macros, { id: id });
-
-          if (!macro) {
-            log.error(`Cannot find the macro: id=${id}`);
-            return;
-          }
-
-          this.event.trigger('macro:load');
-
-          this.command('gcode:load', macro.name, macro.content, context, callback);
-        },
-        'watchdir:load': () => {
-          const [file, callback = noop] = args;
-          const context = {}; // empty context
-
-          monitor.readFile(file, (err, data) => {
-            if (err) {
-              callback(err);
-              return;
-            }
-
-            this.command('gcode:load', file, data, context, callback);
-          });
-        },
-        'autolevel:start': () => {
-          const [params = {}] = args;
-          const {
-            mode = 'full',
-            startX,
-            endX,
-            stepX,
-            startY,
-            endY,
-            stepY,
-            clearanceZ,
-            startZ,
-            endZ,
-            feedrate,
-          } = params;
-
-          if (mode === 'test') {
-            // Test mode: single probe at current XY position, no probe results
-            const testGCode = [
-              'G90',
-              `G0 Z${clearanceZ}`,
-              `G0 Z${startZ}`,
-              `G38.2 Z${endZ} F${feedrate}`,
-              `G0 Z${clearanceZ}`,
-            ];
-            log.info(`[autolevel:start] Test probe: clearanceZ=${clearanceZ}, startZ=${startZ}, endZ=${endZ}, F=${feedrate}`);
-            this.command('gcode', testGCode);
-            return;
-          }
-
-          // Full mode: multi-point probe grid
-          const probePoints = autolevel.createProbeXYPoints({
-            startX,
-            endX,
-            stepX,
-            startY,
-            endY,
-            stepY,
-          });
-
-          // Reset probe state
-          this.probeState = {
-            probedPositions: [],
-            probePoints,
-            minZ: null,
-            maxZ: null,
-            config: {
-              startX,
-              endX,
-              stepX,
-              startY,
-              endY,
-              stepY,
-              clearanceZ,
-              startZ,
-              endZ,
-              feedrate,
-            },
-          };
-
-          log.info(`[autolevel:start] Start probing with ${probePoints.length} points`);
-
-          // Generate probe G-code
-          const probeGCodes = [];
-          probePoints.forEach((point, index) => {
-            const { x, y } = point;
-
-            probeGCodes.push(`(Auto Level: probing point ${index})`);
-
-            probeGCodes.push('G90');
-            probeGCodes.push(`G0 Z${clearanceZ}`);
-            probeGCodes.push(`G0 X${x} Y${y}`);
-            probeGCodes.push(`G0 Z${startZ}`);
-            if (index === 0) {
-              probeGCodes.push(`G38.2 Z${endZ} F${feedrate / 2}`);
-            } else {
-              probeGCodes.push(`G38.2 Z${endZ} F${feedrate}`);
-            }
-            probeGCodes.push(`G0 Z${clearanceZ}`);
-          });
-
-          log.info(`[autolevel:start] Starting probing with ${probePoints.length} points`);
-          this.command('gcode', probeGCodes);
-        },
-        'autolevel:stop': () => {
-          // Reset the machine to cancel the probe cycle immediately
-          this.command('reset');
-
-          // Clear probe state
-          this.probeState = {
-            probedPositions: [],
-            probePoints: [],
-            minZ: null,
-            maxZ: null,
-            config: null,
-          };
-          log.info('[autolevel:stop] Probe stopped and state cleared');
-        },
-        'autolevel:getProbeState': () => {
-          const [, callback] = args;
-          if (typeof callback === 'function') {
-            callback(null, { state: this.probeState });
-          }
-        },
-        'autolevel:loadFromFile': async () => {
-          const [filepath, callback] = args;
-
-          try {
-            const data = await fsp.readFile(filepath, 'utf8');
-            const lines = data.split('\n').filter(line => line.trim().length > 0);
-
-            const probedPositions = [];
-            let minZ = Infinity;
-            let maxZ = -Infinity;
-
-            lines.forEach(line => {
-              const regex = /(-?\d*\.?\d+)?(\s+|$)/g;
-              const matches = [...line.matchAll(regex)];
-              const values = matches.map(match => (match[1] ? Number(match[1]) : undefined));
-              const [x, y, z] = values;
-
-              probedPositions.push({ x, y, z });
-              minZ = Math.min(z, minZ);
-              maxZ = Math.max(z, maxZ);
-            });
-
-            this.probeState.probedPositions = probedPositions;
-            this.probeState.minZ = minZ;
-            this.probeState.maxZ = maxZ;
-
-            if (typeof callback === 'function') {
-              callback(null, { success: true, state: this.probeState });
-            }
-
-            log.info(`[autolevel:load] Loaded ${probedPositions.length} points from ${filepath}`);
-          } catch (err) {
-            log.error('[autolevel:load] Error loading probe data:', err);
-            if (typeof callback === 'function') {
-              callback(err.message, { success: false, state: null });
-            }
-          }
-        },
-        'autolevel:saveToFile': async () => {
-          const [filepath, callback] = args;
-
-          try {
-            const { probedPositions } = this.probeState;
-            const data = probedPositions.map(({ x, y, z }) => {
-              const a = 0, b = 0, c = 0;
-              const u = 0, v = 0, w = 0;
-              return `${x} ${y} ${z} ${a} ${b} ${c} ${u} ${v} ${w}`;
-            }).join('\n');
-
-            await fsp.writeFile(filepath, data, 'utf8');
-
-            if (typeof callback === 'function') {
-              callback(null, { success: true, filepath });
-            }
-
-            log.info(`[autolevel:saveToFile] Saved ${probedPositions.length} points to ${filepath}`);
-          } catch (err) {
-            log.error('[autolevel:saveToFile] Error saving probe data:', err);
-            if (typeof callback === 'function') {
-              callback(err.message, { success: false, filepath });
-            }
-          }
-        },
-        'autolevel:applyProbeCompensation': () => {
-          const [params, callback] = args;
-          const {
-            gcode: gcodeStr,
-            probeData,
-          } = params;
-
-          // Use AutoLevel static method for compensation (step size auto-detected from probeData)
-          const compensatedGcode = autolevel.applyProbeCompensation(gcodeStr, probeData);
-
-          log.info('[autolevel:applyProbeCompensation] Probe compensation applied');
-
-          if (typeof callback === 'function') {
-            callback(null, { compensatedGcode });
           }
         },
       }[cmd];

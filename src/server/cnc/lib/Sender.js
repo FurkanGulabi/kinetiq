@@ -1,36 +1,10 @@
 /* eslint max-classes-per-file: 0 */
 import events from 'events';
 
-export const SP_TYPE_SEND_RESPONSE = 0;
+// Kinetiq: only character counting is used; CNCjs's send-response mode (type 0) was removed.
 export const SP_TYPE_CHAR_COUNTING = 1;
 
 const noop = () => {};
-
-class SPSendResponse {
-    callback = null;
-
-    constructor(options, callback = noop) {
-      if (typeof options === 'function') {
-        callback = options;
-        options = {};
-      }
-      if (typeof callback === 'function') {
-        this.callback = callback;
-      }
-    }
-
-    process() {
-      this.callback && this.callback(this);
-    }
-
-    clear() {
-      // Do nothing
-    }
-
-    get type() {
-      return SP_TYPE_SEND_RESPONSE;
-    }
-}
 
 class SPCharCounting {
     callback = null;
@@ -143,11 +117,11 @@ class Sender extends events.EventEmitter {
 
     dataFilter = null;
 
-    // @param {number} [type] Streaming protocol type. 0 for send-response, 1 for character-counting.
+    // @param {number} [type] Streaming protocol type. Only SP_TYPE_CHAR_COUNTING (1) is supported.
     // @param {object} [options] The options object.
     // @param {number} [options.bufferSize] The buffer size used in character-counting streaming protocol. Defaults to 127.
     // @param {function} [options.dataFilter] A function to be used to handle the data. The function accepts two arguments: The data to be sent to the controller, and the context.
-    constructor(type = SP_TYPE_SEND_RESPONSE, options = {}) {
+    constructor(type = SP_TYPE_CHAR_COUNTING, options = {}) {
       super();
 
       if (typeof options.dataFilter === 'function') {
@@ -188,31 +162,6 @@ class Sender extends events.EventEmitter {
             sp.dataLength += line.length;
             sp.queue.push(line.length);
             this.emit('data', line, this.state.context);
-          }
-        });
-      }
-
-      // send-response
-      if (type === SP_TYPE_SEND_RESPONSE) {
-        this.sp = new SPSendResponse(options, (sp) => {
-          while (!this.state.hold && (this.state.sent < this.state.total)) {
-            // Remove leading and trailing whitespace from both ends of a string
-            let line = this.state.lines[this.state.sent].trim();
-
-            if (this.dataFilter) {
-              line = this.dataFilter(line, this.state.context) || '';
-            }
-
-            this.state.sent++;
-            this.emit('change');
-
-            if (line.length === 0) {
-              this.ack(); // ack empty line
-              continue;
-            }
-
-            this.emit('data', line + '\n', this.state.context);
-            break;
           }
         });
       }

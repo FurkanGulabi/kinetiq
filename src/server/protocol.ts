@@ -18,8 +18,9 @@
  *   - Socket.IO 2 serialises payloads as JSON. `undefined` properties are dropped, functions vanish,
  *     and an `Error` object arrives as `{}` (its `message` is not an own enumerable property).
  *   - Positions are decimal STRINGS exactly as the controller printed them ("12.500"), not numbers.
- *   - `@deprecated Phase 1 removes this` marks what BACKEND_REWRITE_PLAN.md §3 deletes; each was
- *     checked to be unused by src/lib and src/components.
+ *   - Phase 1 of BACKEND_REWRITE_PLAN.md removed the commands and events the UI never used
+ *     (macros, watch directory, CNCjs autolevel, Grbl:* duplicates, command aliases, sleep,
+ *     rapid overrides, feeder:* and statusreport); they are no longer part of the protocol.
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -276,46 +277,6 @@ export type SerialPortWriteContext = WriteContext & {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Removed-in-phase-1 payloads (autolevel, watch directory)
-// ---------------------------------------------------------------------------------------------
-
-/** @deprecated Phase 1 removes this (unused by the UI). */
-export interface AutolevelStartParams {
-  /** 'test' probes once at the current XY; 'full' (default) probes the grid. */
-  mode?: 'full' | 'test';
-  startX?: number;
-  endX?: number;
-  stepX?: number;
-  startY?: number;
-  endY?: number;
-  stepY?: number;
-  clearanceZ?: number;
-  startZ?: number;
-  endZ?: number;
-  feedrate?: number;
-}
-
-/** @deprecated Phase 1 removes this (unused by the UI). */
-export interface AutolevelProbeState {
-  /** Work coordinates in mm; XY snapped to the grid node. */
-  probedPositions: Array<{ x: number; y: number; z: number }>;
-  minZ: number | null;
-  maxZ: number | null;
-  probePoints: Array<{ x: number; y: number }>;
-  config: Omit<AutolevelStartParams, 'mode'> | null;
-}
-
-/** @deprecated Phase 1 removes this (unused by the UI). */
-export interface AutolevelUpdatePayload {
-  current: number;
-  total: number;
-  probedPos: { x: number; y: number; z: number };
-  minZ: number;
-  maxZ: number;
-  maxDeviation: number;
-}
-
-// ---------------------------------------------------------------------------------------------
 // Server → client events
 // ---------------------------------------------------------------------------------------------
 
@@ -345,10 +306,6 @@ export interface ServerEvents {
   'controller:state': (type: ControllerType, state: GrblState) => void;
   /** Runner settings changed (banner, `$n=` lines, `[G54:…]` parameters). */
   'controller:settings': (type: ControllerType, settings: GrblSettings) => void;
-  /** @deprecated Phase 1 removes this (unused by the UI). Legacy duplicate of controller:state. */
-  'Grbl:state': (state: GrblState) => void;
-  /** @deprecated Phase 1 removes this (unused by the UI). Legacy duplicate of controller:settings. */
-  'Grbl:settings': (settings: GrblSettings) => void;
   /** Feeder state changed (checked every tick). */
   'feeder:status': (status: FeederStatus) => void;
   /** Sender state changed (checked every tick). */
@@ -363,10 +320,6 @@ export interface ServerEvents {
   'gcode:load': (name: string, gcode: string, context: Record<string, unknown>) => void;
   /** The program was unloaded. */
   'gcode:unload': () => void;
-  /** @deprecated Phase 1 removes this (unused by the UI). A probe point was recorded. */
-  'autolevel:update': (payload: AutolevelUpdatePayload) => void;
-  /** @deprecated Phase 1 removes this (unused by the UI). All probe points recorded. */
-  'autolevel:complete': () => void;
   /** rc `events` shell task started (TaskRunner). ALL sockets. Unused by the UI. */
   'task:start': (taskId: string) => void;
   /** rc `events` shell task exited with `code`. ALL sockets. Unused by the UI. */
@@ -378,8 +331,6 @@ export interface ServerEvents {
    * by the UI.
    */
   'config:change': (config: Record<string, unknown>) => void;
-  /** @deprecated Phase 1 removes this (unused by the UI). A watched file changed. ALL sockets. */
-  'watchdir:change': (payload: { file: string }) => void;
 }
 
 export type ServerEventName = keyof ServerEvents;
@@ -396,20 +347,15 @@ export const SERVER_EVENTS = [
   'serialport:write',
   'controller:state',
   'controller:settings',
-  'Grbl:state',
-  'Grbl:settings',
   'feeder:status',
   'sender:status',
   'workflow:state',
   'gcode:load',
   'gcode:unload',
-  'autolevel:update',
-  'autolevel:complete',
   'task:start',
   'task:finish',
   'task:error',
   'config:change',
-  'watchdir:change',
 ] as const satisfies readonly ServerEventName[];
 
 // ---------------------------------------------------------------------------------------------
@@ -438,30 +384,12 @@ export interface ControllerCommands {
   'gcode:pause': [];
   /** Writes `~`, workflow → running (Feeder reset, Sender continues). */
   'gcode:resume': [];
-  /** @deprecated Phase 1 removes this (unused by the UI). Alias of gcode:start. */
-  start: [];
-  /** @deprecated Phase 1 removes this (unused by the UI). Alias of gcode:stop. */
-  stop: [options?: { force?: boolean }];
-  /** @deprecated Phase 1 removes this (unused by the UI). Alias of gcode:pause. */
-  pause: [];
-  /** @deprecated Phase 1 removes this (unused by the UI). Alias of gcode:resume. */
-  resume: [];
-  /** @deprecated Phase 1 removes this (unused by the UI). Same as `gcode`. */
-  'feeder:feed': [commands: string | string[], context?: WriteContext];
-  /** @deprecated Phase 1 removes this (unused by the UI). Writes `~`, unholds and continues the Feeder (not while running). */
-  'feeder:start': [];
-  /** @deprecated Phase 1 removes this (unused by the UI). Clears the Feeder. */
-  'feeder:stop': [];
   /** Writes `!`. */
   feedhold: [];
   /** Writes `~`. */
   cyclestart: [];
-  /** @deprecated Phase 1 removes this (unused by the UI). Writes `?`. */
-  statusreport: [];
   /** Writes `$H`. */
   homing: [];
-  /** @deprecated Phase 1 removes this (unused by the UI). Writes `$SLP`. */
-  sleep: [];
   /** Writes `$X`. */
   unlock: [];
   /** Workflow → idle, Feeder reset, writes 0x18. */
@@ -472,44 +400,8 @@ export interface ControllerCommands {
   feedOverride: [value: OverrideStep];
   /** 0x99 reset / 0x9A +10 / 0x9B −10 / 0x9C +1 / 0x9D −1. */
   spindleOverride: [value: OverrideStep];
-  /** @deprecated Phase 1 removes this (unused by the UI). 0 or 100 → 0x95, 50 → 0x96, 25 → 0x97. */
-  rapidOverride: [value: 0 | 25 | 50 | 100];
   /** Queue lines on the Feeder (split on newlines, blanks dropped); one in flight, dropped in Alarm. */
   gcode: [commands: string | string[], context?: WriteContext];
-  /** @deprecated Phase 1 removes this (unused by the UI). Feeds rc macro `id`; callback(null) only on success. */
-  'macro:run':
-    | [id: string, context?: Record<string, unknown>, callback?: (err: null) => void]
-    | [id: string, callback: (err: null) => void];
-  /** @deprecated Phase 1 removes this (unused by the UI). Loads rc macro `id` as the program (via gcode:load). */
-  'macro:load':
-    | [id: string, context?: Record<string, unknown>, callback?: GcodeLoadCallback]
-    | [id: string, callback: GcodeLoadCallback];
-  /** @deprecated Phase 1 removes this (unused by the UI). Loads a file from the watch directory (via gcode:load). */
-  'watchdir:load': [file: string, callback?: GcodeLoadCallback];
-  /** @deprecated Phase 1 removes this (unused by the UI). Generates and feeds probe G-code. */
-  'autolevel:start': [params?: AutolevelStartParams];
-  /** @deprecated Phase 1 removes this (unused by the UI). Sends `reset` and clears the probe state. */
-  'autolevel:stop': [];
-  /** @deprecated Phase 1 removes this (unused by the UI). The first argument is ignored. */
-  'autolevel:getProbeState': [
-    ignored: unknown,
-    callback?: (err: null, result: { state: AutolevelProbeState }) => void,
-  ];
-  /** @deprecated Phase 1 removes this (unused by the UI). Reads a server-side file (x y z per line). */
-  'autolevel:loadFromFile': [
-    filepath: string,
-    callback?: (err: string | null, result: { success: boolean; state: AutolevelProbeState | null }) => void,
-  ];
-  /** @deprecated Phase 1 removes this (unused by the UI). Writes a server-side file. */
-  'autolevel:saveToFile': [
-    filepath: string,
-    callback?: (err: string | null, result: { success: boolean; filepath: string }) => void,
-  ];
-  /** @deprecated Phase 1 removes this (unused by the UI). */
-  'autolevel:applyProbeCompensation': [
-    params: { gcode: string; probeData: Array<{ x: number | string; y: number | string; z: number | string }> },
-    callback?: (err: null, result: { compensatedGcode: string }) => void,
-  ];
 }
 
 export type ControllerCommandName = keyof ControllerCommands;
@@ -518,38 +410,19 @@ export type ControllerCommandName = keyof ControllerCommands;
 export const CONTROLLER_COMMANDS = [
   'gcode:load',
   'gcode:unload',
-  'start',
   'gcode:start',
-  'stop',
   'gcode:stop',
-  'pause',
   'gcode:pause',
-  'resume',
   'gcode:resume',
-  'feeder:feed',
-  'feeder:start',
-  'feeder:stop',
   'feedhold',
   'cyclestart',
-  'statusreport',
   'homing',
-  'sleep',
   'unlock',
   'reset',
   'jogCancel',
   'feedOverride',
   'spindleOverride',
-  'rapidOverride',
   'gcode',
-  'macro:run',
-  'macro:load',
-  'watchdir:load',
-  'autolevel:start',
-  'autolevel:stop',
-  'autolevel:getProbeState',
-  'autolevel:loadFromFile',
-  'autolevel:saveToFile',
-  'autolevel:applyProbeCompensation',
 ] as const satisfies readonly ControllerCommandName[];
 
 // Compile-time check that both lists name every key (`satisfies` above rules out extra names).

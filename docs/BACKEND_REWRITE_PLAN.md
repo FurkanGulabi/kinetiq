@@ -8,7 +8,7 @@ Status: **proposal**, branch `refactor/typescript-backend` (cut from `main` at `
 
 - `controllers/Grbl/GrblController.js` is 1,852 lines in one class: serial lifecycle, Feeder, Sender, status polling, workflow, 32 command handlers, socket fan-out. The graph (`graphify-out/`, 480 nodes, 19 communities) puts it as the top god node, and its community ("Controller Core and Streaming", 73 nodes) has the lowest cohesion (0.06).
 - The browser types (`src/lib/cnc`) guess the backend's payloads; nothing shares a type with the server.
-- It carries generic-CNCjs features Kinetiq never uses (see §3), plus old dependencies (`esprima`, `lodash`, `ensure-type`, `chalk`, `shortid`, `watch`, `socketio-jwt`, socket.io 2.2).
+- It carries generic-CNCjs features Kinetiq never uses (see §3), plus old dependencies (`lodash`, `ensure-type`, `chalk`, `shortid`, `watch`, `socketio-jwt`, socket.io 2.2).
 
 ## 2. Ground rules
 
@@ -27,10 +27,14 @@ Checked against the client (`src/lib/cnc/client.ts`, components) and the server 
 | Events `Grbl:settings`, `Grbl:state`, `autolevel:*`, `watchdir:change` | The UI listens to `controller:*` only. |
 | `services/monitor` (FSMonitor, `watch` dep) | Watch-directory feature, no UI. |
 | `lib/autolevel.js` | Kinetiq has its own bed leveling (`src/lib/leveling`). |
-| `lib/evaluate-*.js`, `lib/translate-expression.js` (`esprima`) | CNCjs's `[expr]` / `%var=` macro language. **Behaviour change:** bracketed text in G-code would reach FluidNC verbatim instead of being evaluated by the server — which is what FluidNC's own `[...]` expressions need. `%wait` and `%msg` stay (the backend appends `%wait`; the UI shows `%msg`). |
 | `Sender` send-response mode | Only character counting is used. |
-| `services/taskrunner` + `lib/EventTrigger.js` (rc `events` → shell) | **Decision needed.** Unused by Kinetiq, and the only shell-execution path in the server (see `src/server/cnc/README.md`). Recommended: remove; a future Automation feature uses a server-side allow-list instead. |
 | `access-control.js` | Folded into `session.ts` (loopback / allow-list check). |
+
+**Kept and ported to TypeScript (decided 2026-11-09):**
+
+- The CNCjs macro language: `[expr]` translation and `%var=` assignments (`lib/evaluate-*.js`, `lib/translate-expression.js`, `esprima`) → `streaming/expressions.ts`, same semantics, with `%wait` / `%msg`. Behaviour is unchanged: bracketed text is still evaluated before a line is sent.
+- The rc `events` shell runner (`services/taskrunner`, `lib/EventTrigger.js`) → `events/EventTrigger.ts` + `events/TaskRunner.ts`. The security rule in `src/server/cnc/README.md` carries over unchanged and moves into the new files' headers: commands come only from the rc file, never from socket or HTTP input.
+- Logging stays on `winston` (`logger.ts`, typed wrapper with the same format and levels).
 
 ## 4. Verification without tests: protocol diff
 
@@ -67,11 +71,16 @@ src/server/
     Feeder.ts             # console/jog lines
     Workflow.ts
     builtins.ts           # %wait, %msg, M0/M1/M6 pause handling
+    expressions.ts        # [expr] / %var= macro language (esprima)
   controller/
     GrblController.ts     # thin coordinator: owns the parts below, socket fan-out
     StatusPoller.ts       # ? and $G query timer, exclusive-mode pause
     JobRunner.ts          # gcode:load/start/pause/resume/stop on Sender + Workflow
     commands.ts           # command name → handler table (typed)
+  events/
+    EventTrigger.ts       # rc `events` → actions (rc file only, never frontend input)
+    TaskRunner.ts         # shell runner for those events
+  logger.ts               # winston wrapper
   fluidnc/                # unchanged (already TS)
   jobs.ts                 # unchanged
 ```
@@ -81,17 +90,17 @@ src/server/
 | # | Phase | Contents | Risk |
 |---|---|---|---|
 | 0 | Baseline | `protocol.ts` from `API_REFERENCE.md` + client types; scenario script; record baseline logs. No behaviour change. | none |
-| 1 | Remove unused | Everything in §3 (JS still). Drop deps. Diff: only removed traffic differs. | low |
-| 2 | Leaf modules | `constants`, units, line parsers, `ImmutableStore`/store, `ConfigStore`, logger, delay → TS. Pure code, easy to check by reading. | low |
+| 1 | Remove unused | Everything in §3 (JS still). Drop the deps they used (`watch`). Diff: only removed traffic differs. | low |
+| 2 | Leaf modules | `constants`, units, line parsers, `ImmutableStore`/store, `ConfigStore`, logger, delay, expression evaluator, EventTrigger/TaskRunner → TS. Pure or isolated code, easy to check by reading. | low |
 | 3 | Serial + streaming | `SerialPort`, `Sender`, `Feeder`, `Workflow`, `MessageSlot`, `GrblState` → TS. The buffer accounting (120-byte window, `ok`/`error` release) is ported line by line. | **high** |
 | 4 | Split the controller | `GrblController` → coordinator + `StatusPoller` + `JobRunner` + `commands`. Done in 2–3 commits, protocol diff after each. | **high** |
 | 5 | Engine + entry | `CNCEngine` → `SocketEngine`, auth into `session.ts`, typed `backend.ts`; `src/lib/cnc` imports `protocol.ts`; remove `allowJs`. | medium |
 | 6 | Hardware + docs | Short session on the machine (connect, jog, a real job with hold/resume/stop, probe, settings save); update `ARCHITECTURE.md`, `BACKEND_INTEGRATION.md`, `src/server/cnc/README.md`; merge to `main`. | — |
 | later | socket.io 4 | Server + client together, own branch. | medium |
 
-## 7. Open decisions
+## 7. Decisions (2026-11-09)
 
-1. Remove the rc `events` shell runner (taskrunner/EventTrigger)? Recommended: yes.
-2. Remove `[expr]` / `%var=` evaluation? Recommended: yes (FluidNC handles its own expressions).
-3. Logger: keep `winston`, or a ~40-line console logger with levels? Recommended: small logger.
-4. Merge cadence: whole branch after phase 6 (recommended), or each phase to `main` once its diff passes.
+1. rc `events` shell runner: **kept**, ported to TypeScript with the same security rule.
+2. `[expr]` / `%var=` macro language: **kept**, ported to TypeScript (`esprima` stays).
+3. Logger: **winston stays**.
+4. Merge cadence: the whole branch goes to `main` **after phase 6** (hardware check); `main` keeps the proven JS backend until then.

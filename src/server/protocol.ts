@@ -3,7 +3,8 @@
  *
  * Derived from the backend source, which is the source of truth (docs/API_REFERENCE.md describes
  * the same contract in prose):
- *   - src/server/cnc/services/cncengine/CNCEngine.js      socket handlers, startup, list, task/config
+ *   - src/server/engine/SocketEngine.ts                   socket handlers, startup, list, task events
+ *     (was services/cncengine/CNCEngine.js)
  *   - src/server/controller/                              controller events and command() handlers
  *     (GrblController.ts fan-out, commands.ts table; was controllers/Grbl/GrblController.js)
  *   - src/server/grbl/GrblRunner.ts                       controller state/settings objects
@@ -301,9 +302,9 @@ export type SerialPortWriteContext = WriteContext & {
  * controller:settings/state, feeder:status, sender:status, gcode:load (if loaded), workflow:state.
  */
 export interface ServerEvents {
-  /** To the connecting socket, right after the handshake. (CNCEngine) */
+  /** To the connecting socket, right after the handshake. (SocketEngine) */
   startup: (payload: StartupPayload) => void;
-  /** Reply to `list`: detected ports plus rc `ports`. (CNCEngine) */
+  /** Reply to `list`: detected ports plus rc `ports`. (SocketEngine) */
   'serialport:list': (ports: SerialPortInfo[]) => void;
   /** Port opened, or a socket attached to an already open port. Attached sockets. */
   'serialport:open': (payload: SerialPortOpenPayload) => void;
@@ -447,7 +448,7 @@ export type ProtocolListsComplete = AssertTrue<
 >;
 
 // ---------------------------------------------------------------------------------------------
-// Client → server events (CNCEngine.js socket.on handlers)
+// Client → server events (SocketEngine socket.on handlers)
 // ---------------------------------------------------------------------------------------------
 
 /** Error-first ack. `err` is an `Error` server-side and arrives as `{}`; null on success. */

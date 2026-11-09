@@ -40,7 +40,7 @@ export interface SerialConnectionOptions {
   parity?: SerialConnectionParity;
   /**
    * Must be booleans. An explicit `undefined` overrides the default `false` and throws
-   * (CNCjs quirk: Object.assign copies undefined), which is why CNCEngine passes `!!rtscts`.
+   * (CNCjs quirk: Object.assign copies undefined), which is why SocketEngine passes `!!rtscts`.
    */
   rtscts?: boolean;
   xon?: boolean;

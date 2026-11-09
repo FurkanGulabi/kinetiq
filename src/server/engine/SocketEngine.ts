@@ -1,54 +1,105 @@
-import { ensureArray } from 'ensure-type';
-import noop from 'lodash/noop';
+/// <reference path="../../types/socket.io.d.ts" />
+/**
+ * The Socket.IO 2 server the browser talks to
+ * (was src/server/cnc/services/cncengine/CNCEngine.js, CNCjs 1.11.5; ported unchanged in rewrite phase 5).
+ *
+ * Handshake: socketio-jwt verifies the session token (`?token=`, minted by session.ts), then
+ * authorizeIPAddress() and validateUser() (session.ts) run, in that order. A rejected handshake
+ * never reaches 'connection'.
+ *
+ * Per socket: `startup` on connect, then the client events of ClientEvents (src/server/protocol.ts):
+ * `list`, `open`, `close`, `command`, `write`, `writeln`. Open controllers live in the store
+ * (`controllers[port]`, src/server/store.ts); `open` creates one or reuses it, `close` closes and
+ * destroys it. Each controller fans out to the sockets attached to it (GrblController.addConnection);
+ * this engine's `io` is used for the all-socket events (`serialport:change`, `task:*`).
+ *
+ * The event names, payloads, ordering, callbacks and log lines are CNCjs's. Only the Grbl
+ * controller is registered (FluidNC speaks GRBL-compatible serial).
+ */
+import type http from 'http';
 import { SerialPort } from 'serialport';
 import socketIO from 'socket.io';
 import socketioJwt from 'socketio-jwt';
-import EventTrigger from '../../../events/EventTrigger';
-import logger from '../../../logger';
-import settings from '../../../config/settings';
-import store from '../../../store';
-import config from '../../../config/ConfigStore';
-import taskRunner from '../../../events/TaskRunner';
-import GrblController from '../../../controller/GrblController';
-import { GRBL } from '../../../grbl/constants';
-import {
-  authorizeIPAddress,
-  validateUser
-} from '../../access-control';
+import EventTrigger from '../events/EventTrigger';
+import logger from '../logger';
+import settings from '../config/settings';
+import store from '../store';
+import config from '../config/ConfigStore';
+import taskRunner from '../events/TaskRunner';
+import GrblController from '../controller/GrblController';
+import type { ControllerSocket } from '../controller/GrblController';
+import { GRBL } from '../grbl/constants';
+import ensureArray from '../util/ensureArray';
+import { authorizeIPAddress, validateUser } from '../session';
+import type {
+  AckCallback,
+  ClientEventName,
+  ClientEvents,
+  ControllerType,
+  ServerEventName,
+  ServerEvents,
+  WriteContext
+} from '../protocol';
 
 const log = logger('service:cncengine');
+
+const noop = (): void => {};
+
+/** The engine's Socket.IO server, with emit() typed by ServerEvents. */
+type EngineServer = Omit<SocketIO.Server, 'emit'> & {
+  emit<E extends ServerEventName>(eventName: E, ...args: Parameters<ServerEvents[E]>): unknown;
+};
+
+/** A connected socket, with its handlers typed by ClientEvents and emit() by ServerEvents. */
+interface EngineSocket extends ControllerSocket {
+  readonly handshake: SocketIO.Handshake;
+  decoded_token?: SocketIO.Socket['decoded_token'];
+  on<E extends ClientEventName>(event: E, listener: ClientEvents[E]): unknown;
+  on(event: 'disconnect', listener: (reason: string) => void): unknown;
+  join(room: string): unknown;
+  leave(room: string): unknown;
+}
+
+/** A port as listed: detected by serialport, or an rc `ports` entry (not validated, as in CNCjs). */
+interface ListedPort {
+  path: string;
+  manufacturer?: string;
+}
+
+type ControllerClass = typeof GrblController;
 
 // Case-insensitive equality checker.
 // @param {string} str1 First string to check.
 // @param {string} str2 Second string to check.
 // @return {boolean} True if str1 and str2 are the same string, ignoring case.
-const caseInsensitiveEquals = (str1, str2) => {
+const caseInsensitiveEquals = (str1: unknown, str2: unknown): boolean => {
   str1 = str1 ? (str1 + '').toUpperCase() : '';
   str2 = str2 ? (str2 + '').toUpperCase() : '';
   return str1 === str2;
 };
 
 // Kinetiq ships only the Grbl controller (FluidNC speaks GRBL-compatible serial).
-const isValidController = (controller) => (
+const isValidController = (controller: string): boolean => (
   // Grbl
   caseInsensitiveEquals(GRBL, controller)
 );
 
-class CNCEngine {
-    controllerClass = {};
+class SocketEngine {
+    // Looked up by own property only (see the `open` handler).
+    controllerClass: Record<string, ControllerClass | undefined> = {};
 
     listener = {
-      taskStart: (...args) => {
+      taskStart: (...args: Parameters<ServerEvents['task:start']>) => {
         if (this.io) {
           this.io.emit('task:start', ...args);
         }
       },
-      taskFinish: (...args) => {
+      taskFinish: (...args: Parameters<ServerEvents['task:finish']>) => {
         if (this.io) {
           this.io.emit('task:finish', ...args);
         }
       },
-      taskError: (...args) => {
+      taskError: (...args: Parameters<ServerEvents['task:error']>) => {
         if (this.io) {
           this.io.emit('task:error', ...args);
         }
@@ -57,23 +108,25 @@ class CNCEngine {
       // including the JWT `secret`, as 'config:change' to every socket; the UI never used it.
     };
 
-    server = null;
+    server: http.Server | null = null;
 
-    io = null;
+    io: EngineServer | null = null;
 
-    sockets = [];
+    sockets: EngineSocket[] = [];
 
     // Event Trigger
     event = new EventTrigger((event, trigger, commands) => {
       log.debug(`EventTrigger: event="${event}", trigger="${trigger}", commands="${commands}"`);
       if (trigger === 'system') {
-        taskRunner.run(commands);
+        // rc entries are not validated: a 'system' entry without `commands` hands undefined to
+        // the shell runner, as in CNCjs (it then fails to spawn).
+        taskRunner.run(commands as string);
       }
     });
 
     // @param {object} server The HTTP server instance.
     // @param {string} controller Specify CNC controller.
-    start(server, controller = '') {
+    start(server: http.Server, controller = ''): void {
       // Fallback to an empty string if the controller is not valid
       if (!isValidController(controller)) {
         controller = '';
@@ -101,17 +154,18 @@ class CNCEngine {
       this.event.trigger('startup');
 
       this.server = server;
-      this.io = socketIO(this.server, {
+      const io: EngineServer = socketIO(this.server, {
         serveClient: true,
         path: '/socket.io'
       });
+      this.io = io;
 
-      this.io.use(socketioJwt.authorize({
+      io.use(socketioJwt.authorize({
         secret: settings.secret,
         handshake: true
       }));
 
-      this.io.use(async (socket, next) => {
+      io.use(async (socket, next) => {
         try {
           // IP Address Access Control
           const ipaddr = socket.handshake.address;
@@ -122,14 +176,14 @@ class CNCEngine {
           await validateUser(user);
         } catch (err) {
           log.warn(err);
-          next(err);
+          next(err as Error); // both checks reject with an Error
           return;
         }
 
         next();
       });
 
-      this.io.on('connection', (socket) => {
+      io.on('connection', (socket: EngineSocket) => {
         const address = socket.handshake.address;
         const user = socket.decoded_token || {};
         log.debug(`New connection from ${address}: id=${socket.id}, user.id=${user.id}, user.name=${user.name}`);
@@ -138,17 +192,18 @@ class CNCEngine {
         this.sockets.push(socket);
 
         socket.emit('startup', {
-          loadedControllers: Object.keys(this.controllerClass),
+          // Only keys this engine registered (start() above).
+          loadedControllers: Object.keys(this.controllerClass) as ControllerType[],
 
           // User-defined baud rates and ports
-          baudrates: ensureArray(config.get('baudrates', [])),
-          ports: ensureArray(config.get('ports', []))
+          baudrates: ensureArray(config.get<number[]>('baudrates', [])),
+          ports: ensureArray(config.get<unknown[]>('ports', []))
         });
 
         socket.on('disconnect', () => {
           log.debug(`Disconnected from ${address}: id=${socket.id}, user.id=${user.id}, user.name=${user.name}`);
 
-          const controllers = store.get('controllers', {});
+          const controllers = store.get<Record<string, GrblController | undefined>>('controllers', {});
           Object.keys(controllers).forEach(port => {
             const controller = controllers[port];
             if (!controller) {
@@ -165,10 +220,10 @@ class CNCEngine {
         socket.on('list', () => {
           log.debug(`socket.list(): id=${socket.id}`);
 
-          const emitPorts = (detected) => {
-            const ports = detected.concat(ensureArray(config.get('ports', [])));
+          const emitPorts = (detected: ListedPort[]) => {
+            const ports = detected.concat(ensureArray(config.get<ListedPort[]>('ports', [])));
 
-            const controllers = store.get('controllers', {});
+            const controllers = store.get<Record<string, GrblController | undefined>>('controllers', {});
             const portsInUse = Object.keys(controllers)
               .filter(port => {
                 const controller = controllers[port];
@@ -196,18 +251,23 @@ class CNCEngine {
         });
 
         // Open serial port
-        socket.on('open', (port, options, callback = noop) => {
+        socket.on('open', (port, options, callback: AckCallback = noop) => {
           if (typeof callback !== 'function') {
             callback = noop;
           }
 
           log.debug(`socket.open("${port}", ${JSON.stringify(options)}): id=${socket.id}`);
 
-          let controller = store.get(`controllers["${port}"]`);
+          let controller = store.get<GrblController | undefined>(`controllers["${port}"]`);
           if (!controller) {
-            let { controllerType = GRBL, baudrate, rtscts, pin } = { ...options };
+            // Socket input is not validated: these are whatever the client sent.
+            let { controllerType = GRBL, baudrate, rtscts, pin } = { ...options } as Partial<typeof options>;
 
-            const Controller = this.controllerClass[controllerType];
+            // Kinetiq: own-property lookup, like GrblController.command() (plan §3a bug 8), so a
+            // controllerType such as 'constructor' is "Not supported" instead of reaching Object.
+            const Controller = Object.prototype.hasOwnProperty.call(this.controllerClass, controllerType)
+              ? this.controllerClass[controllerType]
+              : undefined;
             if (!Controller) {
               const err = `Not supported controller: ${controllerType}`;
               log.error(err);
@@ -218,7 +278,7 @@ class CNCEngine {
             const engine = this;
             controller = new Controller(engine, {
               port: port,
-              baudrate: baudrate,
+              baudrate: baudrate as number, // SerialConnection's constructor throws if not a number
               rtscts: !!rtscts,
               pin,
             });
@@ -256,14 +316,14 @@ class CNCEngine {
         });
 
         // Close serial port
-        socket.on('close', (port, callback = noop) => {
+        socket.on('close', (port, callback: AckCallback = noop) => {
           if (typeof callback !== 'function') {
             callback = noop;
           }
 
           log.debug(`socket.close("${port}"): id=${socket.id}`);
 
-          const controller = store.get(`controllers["${port}"]`);
+          const controller = store.get<GrblController | undefined>(`controllers["${port}"]`);
           if (!controller) {
             const err = `Serial port "${port}" not accessible`;
             log.error(err);
@@ -277,7 +337,7 @@ class CNCEngine {
           // Leave the room
           socket.leave(port);
 
-          controller.close(err => {
+          controller.close(() => {
             // Remove controller from store
             store.unset(`controllers[${JSON.stringify(port)}]`);
 
@@ -291,19 +351,20 @@ class CNCEngine {
         socket.on('command', (port, cmd, ...args) => {
           log.debug(`socket.command("${port}", "${cmd}"): id=${socket.id}`);
 
-          const controller = store.get(`controllers["${port}"]`);
+          const controller = store.get<GrblController | undefined>(`controllers["${port}"]`);
           if (!controller || controller.isClose()) {
             log.error(`Serial port "${port}" not accessible`);
             return;
           }
 
-          controller.command.apply(controller, [cmd].concat(args));
+          // Was `controller.command.apply(controller, [cmd].concat(args))`: the same call.
+          controller.command(cmd, ...args);
         });
 
-        socket.on('write', (port, data, context = {}) => {
+        socket.on('write', (port, data, context: WriteContext = {}) => {
           log.debug(`socket.write("${port}", "${data}", ${JSON.stringify(context)}): id=${socket.id}`);
 
-          const controller = store.get(`controllers["${port}"]`);
+          const controller = store.get<GrblController | undefined>(`controllers["${port}"]`);
           if (!controller || controller.isClose()) {
             log.error(`Serial port "${port}" not accessible`);
             return;
@@ -312,10 +373,10 @@ class CNCEngine {
           controller.write(data, context);
         });
 
-        socket.on('writeln', (port, data, context = {}) => {
+        socket.on('writeln', (port, data, context: WriteContext = {}) => {
           log.debug(`socket.writeln("${port}", "${data}", ${JSON.stringify(context)}): id=${socket.id}`);
 
-          const controller = store.get(`controllers["${port}"]`);
+          const controller = store.get<GrblController | undefined>(`controllers["${port}"]`);
           if (!controller || controller.isClose()) {
             log.error(`Serial port "${port}" not accessible`);
             return;
@@ -326,7 +387,7 @@ class CNCEngine {
       });
     }
 
-    stop() {
+    stop(): void {
       if (this.io) {
         this.io.close();
         this.io = null;
@@ -340,4 +401,4 @@ class CNCEngine {
     }
 }
 
-export default CNCEngine;
+export default SocketEngine;

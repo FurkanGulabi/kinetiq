@@ -9,7 +9,7 @@ npm run fake-controller   # terminal 1
 npm run dev:fake          # terminal 2
 ```
 
-1. The fake opens a pseudo-terminal, symlinks it to `$TMPDIR/kinetiq-fake0`, and writes `$TMPDIR/kinetiq-fake.rc`. That rc file lists the port under `ports`, the backend's list of extra ports (`CNCEngine` `list`).
+1. The fake opens a pseudo-terminal, symlinks it to `$TMPDIR/kinetiq-fake0`, and writes `$TMPDIR/kinetiq-fake.rc`. That rc file lists the port under `ports`, the backend's list of extra ports (`list` in `src/server/engine/SocketEngine.ts`).
 2. `npm run dev:fake` is `npm run dev` with `KINETIQ_RC` pointing at that rc file. Your real `~/.kinetiqrc` is not touched.
 3. In Kinetiq, pick **kinetiq-fake0** and Connect.
 

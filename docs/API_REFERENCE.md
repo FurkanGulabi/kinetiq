@@ -2,7 +2,7 @@
 
 **Project:** Kinetiq: Advanced Motion Control
 **Scope:** The verified communication interface between the Kinetiq UI and the embedded CNCjs backend (GRBL controller only).
-**Source of truth:** `CNCJS-fork/src/server/services/cncengine/CNCEngine.js` and `CNCJS-fork/src/server/controllers/Grbl/GrblController.js`. Line numbers refer to commit `a3922a1bf`. The same code now runs inside Kinetiq as `src/server/cnc/` (same file layout); Kinetiq's few changes are listed in `src/server/cnc/README.md`, so line numbers in the embedded copy can differ slightly.
+**Source of truth:** `CNCJS-fork/src/server/services/cncengine/CNCEngine.js` and `CNCJS-fork/src/server/controllers/Grbl/GrblController.js`. Line numbers refer to commit `a3922a1bf`. The same code now runs inside Kinetiq, rewritten into TypeScript under `src/server/` (the engine is `src/server/engine/SocketEngine.ts`, the controller `src/server/controller/`, the IP policy `src/server/session.ts`; payload types in `src/server/protocol.ts`), so the line numbers below refer to the CNCjs originals only. Kinetiq's changes are listed in `BACKEND_INTEGRATION.md` §7.1.
 
 Every event, payload and command below was read in source. Anything Kinetiq **derives** on the client is marked **[Kinetiq-derived]**. Anything not yet observed at runtime is marked **[runtime check]**.
 

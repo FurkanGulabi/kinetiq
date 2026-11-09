@@ -258,7 +258,7 @@ export function listPorts(): void {
 
 /**
  * After a page reload, a second tab or a backend reconnect: if this backend already has a port
- * open, attach to it. CNCEngine adds the socket without reopening the port and replays state.
+ * open, attach to it. SocketEngine adds the socket without reopening the port and replays state.
  */
 function attachToOpenPort(): void {
   const s = getState();

@@ -2,11 +2,11 @@
 /**
  * Shell runner for the rc file's `events` (was src/server/cnc/services/taskrunner/TaskRunner.js
  * + index.js, CNCjs). Emits 'start' (taskId), 'finish' (taskId, code) and 'error' (taskId, err).
- * The default export is the process-wide singleton (CNCEngine listens to its events).
+ * The default export is the process-wide singleton (SocketEngine listens to its events).
  *
  * SECURITY RULE: commands passed to run() come ONLY from the rc file's `events` entries
  * (via events/EventTrigger.ts), never from socket, HTTP or other frontend input.
- * See src/server/cnc/README.md, "Security rule: shell commands".
+ * See docs/BACKEND_INTEGRATION.md §7.2, "Security rule: shell commands".
  */
 import events from 'events';
 import type { SpawnOptions } from 'child_process';
@@ -70,11 +70,11 @@ export class TaskRunner extends events.EventEmitter {
 }
 
 // SECURITY (Kinetiq): taskRunner.run() spawns a shell. Its only callers are the EventTrigger
-// callbacks in CNCEngine and GrblController, and the commands they pass come from the `events`
+// callbacks in SocketEngine and GrblController, and the commands they pass come from the `events`
 // entries of the rc file (~/.kinetiqrc), which only the machine owner can edit.
 // Never pass socket, HTTP or other frontend input to run(), and never add an API that writes
 // `events` (or any other value later handed to run()) into the config. The future Automation UI
-// must use a fixed allow-list of server-defined actions instead. See src/server/cnc/README.md.
+// must use a fixed allow-list of server-defined actions instead. See docs/BACKEND_INTEGRATION.md §7.2.
 const taskRunner = new TaskRunner();
 
 export default taskRunner;

@@ -1,5 +1,5 @@
 /**
- * The controller command table: `socket.emit('command', port, cmd, ...args)` → CNCEngine →
+ * The controller command table: `socket.emit('command', port, cmd, ...args)` → SocketEngine →
  * GrblController.command(cmd, ...args) → the handler below
  * (moved out of GrblController.js `command()`, CNCjs 1.11.5).
  *
@@ -21,8 +21,8 @@ export type CommandHandler<C extends ControllerCommandName> = (...args: Controll
 export type CommandTable = { [C in ControllerCommandName]: CommandHandler<C> };
 
 /**
- * Builds the table. It is a plain object literal looked up with `table[cmd]`, as CNCjs did, so
- * inherited Object.prototype names behave the same (see GrblController.command()).
+ * Builds the table: a plain object literal, as in CNCjs. GrblController.command() looks names up
+ * as own properties only, so inherited Object.prototype names are unknown commands (plan §3a bug 8).
  */
 export const createCommandTable = (controller: GrblController): CommandTable => ({
   'gcode:load': (name, gcode, context?, callback?) => {

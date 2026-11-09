@@ -5,7 +5,7 @@
  *    ├── GET /api/kinetiq/session → JWT for the Socket.IO handshake
  *    ├── /api/kinetiq/jobs/*     → job library (uploaded G-code + recent runs)
  *    ├── /api/kinetiq/machine-config → FluidNC config read (settings editor)
- *    ├── /socket.io/*            → CNCEngine (src/server/cnc, Socket.IO 2.2)
+ *    ├── /socket.io/*            → SocketEngine (src/server/engine, Socket.IO 2.2)
  *    └── everything else         → Next.js
  *
  * See docs/BACKEND_INTEGRATION.md §5 for the boot order and shutdown behaviour.
@@ -32,7 +32,7 @@ async function main() {
   const { handleJobs, JOBS_PATH } = await import('./src/server/jobs');
   const { handleMachineConfig, MACHINE_CONFIG_PATH } = await import('./src/server/fluidnc/machineConfig');
 
-  const { settings, engine, store } = loadBackend();
+  const { settings, engine, store } = await loadBackend();
   log(`CNC backend loaded (config: ${settings.rcfile})`);
 
   let handle: ((req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>) | null = null;
@@ -52,7 +52,7 @@ async function main() {
       void handleMachineConfig(req, res, settings, store);
       return;
     }
-    // Socket.IO requests never reach this handler: Engine.IO (attached by CNCEngine) wraps the
+    // Socket.IO requests never reach this handler: Engine.IO (attached by SocketEngine) wraps the
     // server's 'request' listeners and answers /socket.io/* itself.
     if (!handle) {
       res.writeHead(503).end(headless ? 'Kinetiq is running headless (no UI)' : 'Kinetiq is starting');

@@ -19,7 +19,7 @@
  * listeners of one event emit to sockets, so the order is visible), and every serial write,
  * timer and log line is the same.
  *
- * Used by CNCEngine (src/server/cnc/services/cncengine/CNCEngine.js), the FluidNC settings
+ * Used by SocketEngine (src/server/engine/SocketEngine.ts), the FluidNC settings
  * exchange (src/server/fluidnc/exchange.ts, machineConfig.ts: setExclusive, connection,
  * runner.settings, workflow.state, writeln, isOpen) and backend.ts closeAllControllers().
  */
@@ -97,14 +97,14 @@ export interface ControllerSocket {
   emit<E extends ServerEventName>(eventName: E, ...args: Parameters<ServerEvents[E]>): unknown;
 }
 
-/** The CNCEngine that created the controller (only its Socket.IO server is used). */
+/** The SocketEngine (engine/SocketEngine.ts) that created the controller (only its Socket.IO server is used). */
 export interface ControllerEngine {
   io: {
     emit(eventName: 'serialport:change', payload: SerialPortChangePayload): unknown;
   } | null;
 }
 
-/** Constructor options, as CNCEngine passes them (`rtscts` already coerced with `!!`). */
+/** Constructor options, as SocketEngine passes them (`rtscts` already coerced with `!!`). */
 export interface GrblControllerOptions {
   port: string;
   baudrate: number;
@@ -142,7 +142,7 @@ const isFilled = <T extends object>(value: T | EmptyObject): value is T => !_.is
 class GrblController {
   type: ControllerType = GRBL;
 
-  // CNCEngine
+  // SocketEngine
   engine: ControllerEngine;
 
   options: GrblControllerOptions;
@@ -784,15 +784,17 @@ class GrblController {
 
   /**
    * Runs a command from the table in commands.ts. Unknown names are logged and ignored.
-   * CNCjs quirk (kept): the table is a plain object, so an inherited name such as 'toString' or
-   * 'valueOf' finds an Object.prototype function and calls it (most return or throw a TypeError),
-   * and '__proto__' throws "handler is not a function".
    */
   command<C extends ControllerCommandName>(cmd: C, ...args: ControllerCommands[C]): void;
   command(cmd: string, ...args: unknown[]): void;
   command(cmd: string, ...args: unknown[]): void {
     // Socket input is not validated: the arguments go to the handler as they arrived.
-    const handler = (this.commands as unknown as Record<string, ((...a: unknown[]) => unknown) | undefined>)[cmd];
+    const table = this.commands as unknown as Record<string, ((...a: unknown[]) => unknown) | undefined>;
+    // Kinetiq (plan §3a bug 8, fixed in phase 5): own properties only. CNCjs indexed the plain
+    // object directly, so an inherited name such as 'toString', 'valueOf', 'constructor' or
+    // '__proto__' found an Object.prototype member (returned, threw a TypeError, or threw "handler
+    // is not a function") instead of reaching "Unknown command" below.
+    const handler = Object.prototype.hasOwnProperty.call(table, cmd) ? table[cmd] : undefined;
 
     if (!handler) {
       log.error(`Unknown command: ${cmd}`);

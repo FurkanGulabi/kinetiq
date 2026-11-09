@@ -9,7 +9,7 @@
  * SECURITY (Kinetiq): the rc file's `events` entries are run as shell commands by
  * events/TaskRunner.ts (via events/EventTrigger.ts). Only the machine owner may write them:
  * never set `events` (or any other value later handed to taskRunner.run()) from socket, HTTP or
- * other frontend input. See src/server/cnc/README.md, "Security rule: shell commands".
+ * other frontend input. See docs/BACKEND_INTEGRATION.md §7.2, "Security rule: shell commands".
  */
 import events from 'events';
 import fs from 'fs';

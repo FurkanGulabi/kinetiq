@@ -1,10 +1,10 @@
 /**
  * Kinetiq CNC backend bootstrap.
  *
- * The backend is the CNCjs GRBL server code, being rewritten into TypeScript in phases
- * (docs/BACKEND_REWRITE_PLAN.md): CNCEngine is still JavaScript in src/server/cnc/; the
- * controller (src/server/controller/), Sender/Feeder/Workflow, SerialConnection and the
- * config/store/logger services are TypeScript. No Marlin/Smoothie/TinyG controllers, no Express app.
+ * The backend is the CNCjs 1.11.5 GRBL server code, rewritten into TypeScript in phases
+ * (docs/BACKEND_REWRITE_PLAN.md): the Socket.IO engine (engine/SocketEngine.ts), the controller
+ * (controller/), Sender/Feeder/Workflow, SerialConnection and the config/store/logger services.
+ * No Marlin/Smoothie/TinyG controllers, no Express app.
  * This file does what CNCjs's server/index.js did for it: load the rc file and the secret.
  *
  * SERVER-ONLY: never import this file from src/app, src/components or src/lib.
@@ -14,57 +14,35 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type http from 'node:http';
+// Type-only imports: erased at compile time, so they load nothing (see loadBackend()).
+import type { Settings } from './config/settings';
+import type { ImmutableStore } from './store';
+import type GrblController from './controller/GrblController';
+import type SocketEngine from './engine/SocketEngine';
 
-export interface CNCEngineInstance {
-  io: { close(): void } | null;
-  start(server: http.Server, controller?: string): void;
-  stop(): void;
-}
-
-export interface CNCSettings {
-  secret: string;
-  rcfile: string;
-  accessTokenLifetime: string;
-}
-
-interface ConfigStore {
-  load(file: string): unknown;
-  get<T = unknown>(key: string, defaultValue?: T): T;
-  set(key: string, value: unknown): void;
-}
-
-/** The parts of the controller (src/server/controller/GrblController.ts) used on shutdown. */
-interface CNCControllerLike {
-  /** null (falsy) when there is no connection (CNCjs quirk). */
-  isOpen(): boolean | null;
-  close(callback: (err?: unknown) => void): void;
-  destroy(): void;
-  workflow?: { state: string } | null;
-}
-
-interface ImmutableStore {
-  get<T = unknown>(key: string, defaultValue?: T): T;
-  unset(key: string): void;
-}
+/** The backend settings object (config/settings.ts); `rcfile` and `secret` are set by loadBackend(). */
+export type CNCSettings = Settings;
 
 export interface CNCBackend {
   settings: CNCSettings;
-  engine: CNCEngineInstance;
+  engine: SocketEngine;
   store: ImmutableStore;
 }
 
 /**
  * Loads config + secret and constructs (but does not start) the CNC engine.
- * Must run after process.env.NODE_ENV is set: the settings module reads it on first require.
+ * Must run after process.env.NODE_ENV is set: the settings module reads it when it first evaluates.
  */
-export function loadBackend(): CNCBackend {
-  // Required lazily so NODE_ENV (set in server.ts) is in effect when these modules evaluate.
-  const settings: CNCSettings = require('./config/settings').default;
-  const config: ConfigStore = require('./config/ConfigStore').default;
-  const { setLevel } = require('./logger') as { setLevel(level: string): void };
-  const store: ImmutableStore = require('./store').default;
-  const CNCEngine: new () => CNCEngineInstance = require('./cnc/services/cncengine/CNCEngine').default;
+export async function loadBackend(): Promise<CNCBackend> {
+  // Imported lazily (dynamic import(), compiled to require() in the CommonJS server build) so the
+  // NODE_ENV set in server.ts is in effect when these modules evaluate. A static import would
+  // evaluate config/settings.ts (directly, and through the engine, logger and session imports) as
+  // soon as this file loads. Same order as before: settings, config, logger, store, engine.
+  const { default: settings } = await import('./config/settings');
+  const { default: config } = await import('./config/ConfigStore');
+  const { setLevel } = await import('./logger');
+  const { default: store } = await import('./store');
+  const { default: SocketEngine } = await import('./engine/SocketEngine');
 
   setLevel(process.env.KINETIQ_LOG_LEVEL || 'info');
 
@@ -81,12 +59,12 @@ export function loadBackend(): CNCBackend {
   }
   settings.secret = config.get<string>('secret');
 
-  return { settings, engine: new CNCEngine(), store };
+  return { settings, engine: new SocketEngine(), store };
 }
 
 /** Closes every open serial port through the controller API (used on shutdown). */
 export function closeAllControllers(store: ImmutableStore, log: (msg: string) => void): Promise<void> {
-  const controllers = store.get<Record<string, CNCControllerLike | undefined>>('controllers', {});
+  const controllers = store.get<Record<string, GrblController | undefined>>('controllers', {});
   const tasks = Object.entries(controllers).map(([port, controller]) => new Promise<void>((resolve) => {
     if (!controller) {
       resolve();

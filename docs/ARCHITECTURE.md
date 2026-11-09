@@ -36,8 +36,8 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 | Layer | Choice | Why |
 |---|---|---|
 | Framework | **Next.js 16** (App Router) + **React 19** + **TypeScript** | As required |
-| Process host | **Next.js custom server** (`server.ts`) | Hosts CNCEngine on the same `http.Server` (D1) |
-| Machine backend | **Built-in CNCjs GRBL backend** (`src/server/cnc`, carried over from CNCJS-fork) | Same logic as CNCjs, no external fork (D2, revised 2026-11-08) |
+| Process host | **Next.js custom server** (`server.ts`) | Hosts the backend's Socket.IO engine on the same `http.Server` (D1) |
+| Machine backend | **Built-in CNCjs GRBL backend**, carried over from CNCJS-fork and rewritten into TypeScript (`src/server/`) | Same logic as CNCjs, no external fork (D2, revised 2026-11-08; `BACKEND_REWRITE_PLAN.md`) |
 | Realtime client | **`socket.io-client@2.x`** | Protocol lock-step with the CNCjs Socket.IO 2.2 server (D3) |
 | Styling | **Tailwind CSS v4** with CSS-variable design tokens (`@theme`) | As required; tokens are defined once |
 | Primitives | **Radix UI**, only `@radix-ui/react-select` and `@radix-ui/react-dialog` | Accessible select and confirmation dialog without a full component library |
@@ -57,7 +57,7 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 ```
 kinetiq/
 ├── package.json                 name: "kinetiq"; scripts: dev / build / start / typecheck / fake-controller / dev:fake
-├── server.ts                    custom server: http.Server + Kinetiq HTTP APIs + Next handler + CNCEngine + shutdown
+├── server.ts                    custom server: http.Server + Kinetiq HTTP APIs + Next handler + SocketEngine + shutdown
 ├── tsconfig.json                app (Next)
 ├── tsconfig.server.json         server.ts → dist/server.js (CommonJS, Node target)
 ├── next.config.ts
@@ -65,16 +65,29 @@ kinetiq/
 ├── public/favicon.svg
 ├── scripts/
 │   ├── fake-controller.py       fake FluidNC on a pseudo-terminal (FAKE_CONTROLLER.md)
+│   ├── protocol-scenarios/      protocol diff: record.mts, compare.mjs, baseline/ (BACKEND_REWRITE_PLAN.md §4)
 │   └── build-fluidnc-schema.mjs generates src/lib/fluidnc/schema.json (SETTINGS_EDITOR.md)
 ├── docs/                        ← this documentation
 └── src/
     ├── server/                  SERVER-ONLY. Imported by server.ts, never by src/app, src/components or src/lib.
-    │   ├── backend.ts           loads src/server/cnc (rc file, secret, CNCEngine); closeAllControllers() for shutdown
-    │   ├── cnc/                 CNCjs GRBL server code (JavaScript, see cnc/README.md)
-    │   ├── session.ts           GET /api/kinetiq/session (JWT mint, Host check); isAuthorized() for the HTTP APIs
+    │   ├── backend.ts           loads the backend (rc file, secret, SocketEngine); closeAllControllers() for shutdown
+    │   ├── session.ts           GET /api/kinetiq/session (JWT mint, Host check); isAuthorized() for the HTTP APIs;
+    │   │                        socket handshake checks authorizeIPAddress() / validateUser()
     │   ├── jobs.ts              /api/kinetiq/jobs (job library)
-    │   └── fluidnc/             /api/kinetiq/machine-config (settings editor): exchange.ts, xmodem.ts, machineConfig.ts
-    ├── types/socket.io-client.d.ts
+    │   ├── fluidnc/             /api/kinetiq/machine-config (settings editor): exchange.ts, xmodem.ts, machineConfig.ts
+    │   │   — the CNCjs GRBL backend, rewritten into TypeScript (BACKEND_INTEGRATION.md §7) —
+    │   ├── protocol.ts          socket event/command names + payload types, shared with src/lib/cnc
+    │   ├── engine/SocketEngine.ts  Socket.IO 2 server: handshake, list/open/close/command/write/writeln (was CNCEngine)
+    │   ├── controller/          GrblController (coordinator, socket fan-out), StatusPoller, JobRunner, filters, commands
+    │   ├── streaming/           Sender, Feeder, Workflow, MessageSlot, expressions ([expr] / %var=), builtins
+    │   ├── serial/SerialConnection.ts  serialport v10 + ReadlineParser
+    │   ├── grbl/                constants, parser/ (line parsers), GrblRunner (state + settings)
+    │   ├── config/              settings.ts, ConfigStore.ts (rc file)
+    │   ├── events/              EventTrigger, TaskRunner (rc `events` only; BACKEND_INTEGRATION.md §7.2)
+    │   ├── store.ts, logger.ts, constants.ts, util/
+    │   └── CNCJS_LICENSE        CNCjs MIT licence (provenance: BACKEND_INTEGRATION.md §7.1)
+    ├── types/                   socket.io-client.d.ts; server-only typings referenced by src/server
+    │                            (socket.io, range_check, spawn-default-shell, gcode-parser)
     ├── app/
     │   ├── layout.tsx           <html>, fonts, metadata ("Kinetiq")
     │   ├── page.tsx             renders <Workspace/> (static shell)
@@ -109,7 +122,7 @@ kinetiq/
         └── settings/                   SettingsPanel (sheet), SettingsEditor
 ```
 
-**Import boundary (safety-relevant):** nothing under `src/app`, `src/components` or `src/lib` may import `src/server/**`. This keeps serialport and CNCEngine out of Next's bundles and HMR, so the process can never hold two engines or two handles on the port.
+**Import boundary (safety-relevant):** nothing under `src/app`, `src/components` or `src/lib` may import `src/server/**`. This keeps serialport and the Socket.IO engine out of Next's bundles and HMR, so the process can never hold two engines or two handles on the port.
 
 ---
 
@@ -443,7 +456,7 @@ The deferred M3 console returns as a fifth floating widget (480 px). It starts c
   - `typecheck`: `tsc --noEmit` for the app and the server
   - `fake-controller`, `dev:fake`: fake FluidNC for development (`FAKE_CONTROLLER.md`)
 - **Never** set `output: 'standalone'`, because it does not trace a custom server.
-- The backend ships inside Kinetiq (`src/server/cnc`), so there is no external build to check at boot.
+- The backend ships inside Kinetiq (`src/server/`), so there is no external build to check at boot.
 
 ---
 

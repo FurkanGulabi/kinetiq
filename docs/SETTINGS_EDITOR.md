@@ -69,11 +69,11 @@ These are request/response operations that take 0.2–10 s and return one result
 
 GRBL replies strictly in order, so this is enough for read commands. The capture showed no mixing, but the server shouldn't rely on that.
 
-**Exclusive mode for XModem (the only change to `src/server/cnc`).** A binary transfer must not get a `?` byte from the status poll in the middle of it. Two small, documented hooks in `GrblController`:
+**Exclusive mode for XModem (the only change to the CNCjs backend code for this feature).** A binary transfer must not get a `?` byte from the status poll in the middle of it. Two small, documented hooks in `GrblController`:
 - `controller.setExclusive(true|false)`: while it's on, the query timer skips `?`/`$G`, and Feeder lines are dropped (the Feeder is reset, logged). Turning it off clears the query masks so polling resumes.
 - The transfer itself reads raw bytes from `controller.connection.port` alongside the line parser, and writes raw bytes to it directly.
 
-FluidNC's `[MSG:INFO: Received N bytes]` after the transfer is read as a normal line again. This change gets noted in `src/server/cnc/README.md` like the earlier ones.
+FluidNC's `[MSG:INFO: Received N bytes]` after the transfer is read as a normal line again. This change is listed with the other Kinetiq changes in `BACKEND_INTEGRATION.md` §7.1 (code: `src/server/controller/GrblController.ts`, `StatusPoller.ts`).
 
 **Settings-parser cleanup (done in S1).** CNCjs's settings parser matches any `$…=…` line. So replies like `$Config/Filename=config.yaml` and `$/axes/x/steps_per_mm=400.000` would end up as fake entries in `controller:settings`. After an exchange, `exchange.ts` keeps only numeric GRBL settings (`$0`…`$255`) in `runner.settings`, and the controller broadcasts the cleaned object on its next tick.
 

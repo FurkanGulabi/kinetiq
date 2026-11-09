@@ -1,6 +1,6 @@
 # Kinetiq
 
-**Advanced Motion Control.** A modern control interface for GRBL-compatible CNC machines (first target: FluidNC on ESP32). It is one Next.js application with a built-in CNC backend (the CNCjs GRBL server code, carried into [`src/server/cnc`](src/server/cnc)) for serial communication, streaming and safety logic.
+**Advanced Motion Control.** A modern control interface for GRBL-compatible CNC machines (first target: FluidNC on ESP32). It is one Next.js application with a built-in CNC backend (the CNCjs GRBL server code, carried into [`src/server`](src/server) and rewritten in TypeScript) for serial communication, streaming and safety logic.
 
 > **Safety:** Kinetiq's Hold and Reset are software commands. They do **not** replace a hard-wired emergency-stop circuit.
 

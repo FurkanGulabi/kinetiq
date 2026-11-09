@@ -5,13 +5,11 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "esModuleInterop": true,
-    "allowJs": true,
-    "checkJs": false,
     "strict": true,
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["server.ts", "src/server/**/*.ts", "src/server/**/*.js"]
+  "include": ["server.ts", "src/server/**/*.ts"]
 }

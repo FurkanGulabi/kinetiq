@@ -1,10 +1,10 @@
 # Backend rewrite plan: CNCjs JavaScript → modular TypeScript
 
-Status: branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). **Phase 0 done** (protocol types, recorder, baseline). **Phase 1 done** (removals; bugs 1 and 2 of §3a fixed). **Phase 2 done** (leaf modules in TypeScript; bug 5 of §3a found and fixed). **Phase 3 done** (serial + streaming core in TypeScript; bugs 6–7 of §3a found). **Phase 4 done** (GrblController split into `src/server/controller/`; protocol diff identical; bug 8 of §3a found).
+Status: branch `refactor/typescript-backend` (cut from `main` at `ce7ef91`). **Phase 0 done** (protocol types, recorder, baseline). **Phase 1 done** (removals; bugs 1 and 2 of §3a fixed). **Phase 2 done** (leaf modules in TypeScript; bug 5 of §3a found and fixed). **Phase 3 done** (serial + streaming core in TypeScript; bugs 6–7 of §3a found). **Phase 4 done** (GrblController split into `src/server/controller/`; protocol diff identical; bug 8 of §3a found). **Phase 5 done** (`CNCEngine.js` → `engine/SocketEngine.ts`, `access-control.js` → `session.ts`, typed `backend.ts`, `allowJs` removed; no JavaScript left under `src/server/`; bug 8 of §3a fixed; protocol diff identical). Next: phase 6 (hardware session).
 
 ## 1. Why
 
-`src/server/cnc` is the CNCjs 1.11.5 GRBL server, copied in as JavaScript (45 files, ~6,400 lines). It works and has run on the real machine, but:
+`src/server/cnc` was the CNCjs 1.11.5 GRBL server, copied in as JavaScript (45 files, ~6,400 lines). (As of phase 5 it is fully ported and the folder is gone; provenance and the CNCjs licence: `BACKEND_INTEGRATION.md` §7.1, `src/server/CNCJS_LICENSE`.) It works and has run on the real machine, but:
 
 - `controllers/Grbl/GrblController.js` is 1,852 lines in one class: serial lifecycle, Feeder, Sender, status polling, workflow, 32 command handlers, socket fan-out. The graph (`graphify-out/`, 480 nodes, 19 communities) puts it as the top god node, and its community ("Controller Core and Streaming", 73 nodes) has the lowest cohesion (0.06).
 - The browser types (`src/lib/cnc`) guess the backend's payloads; nothing shares a type with the server.
@@ -28,12 +28,12 @@ Checked against the client (`src/lib/cnc/client.ts`, components) and the server 
 | `services/monitor` (FSMonitor, `watch` dep) | Watch-directory feature, no UI. |
 | `lib/autolevel.js` | Kinetiq has its own bed leveling (`src/lib/leveling`). |
 | `Sender` send-response mode | Only character counting is used. |
-| `access-control.js` | Folded into `session.ts` (loopback / allow-list check). |
+| `access-control.js` | Folded into `session.ts` (loopback / allow-list check). Done in phase 5: `authorizeIPAddress` / `validateUser` ported unchanged. |
 
 **Kept and ported to TypeScript (decided 2026-11-09):**
 
 - The CNCjs macro language: `[expr]` translation and `%var=` assignments (`lib/evaluate-*.js`, `lib/translate-expression.js`, `esprima`) → `streaming/expressions.ts`, same semantics, with `%wait` / `%msg`. Behaviour is unchanged: bracketed text is still evaluated before a line is sent.
-- The rc `events` shell runner (`services/taskrunner`, `lib/EventTrigger.js`) → `events/EventTrigger.ts` + `events/TaskRunner.ts`. The security rule in `src/server/cnc/README.md` carries over unchanged and moves into the new files' headers: commands come only from the rc file, never from socket or HTTP input.
+- The rc `events` shell runner (`services/taskrunner`, `lib/EventTrigger.js`) → `events/EventTrigger.ts` + `events/TaskRunner.ts`. The security rule (formerly in `src/server/cnc/README.md`, now `BACKEND_INTEGRATION.md` §7.2) carries over unchanged and moves into the new files' headers: commands come only from the rc file, never from socket or HTTP input.
 - Logging stays on `winston` (`logger.ts`, typed wrapper with the same format and levels).
 
 ## 3a. Bugs found in Phase 0
@@ -49,7 +49,7 @@ Found while typing the protocol (`src/server/protocol.ts`). Fixing them changes 
 
 6. **The Sender runs `dataFilter` twice on a line that did not fit in the buffer** (open, ported as-is). The filtered text is kept in `sp.line` and filtered again on the next `next()`, so GrblController's filter (expressions, `%` lines, `populateContext`, M0/M1/M6 hold detection) can run twice for one line. Revisit in phase 4 only with a protocol-diff-visible reason.
 7. **`await this.connection.port.set(...)` does not wait** (open): serialport v10's `set()` is callback-based and returns void (GrblController). Ported as-is.
-8. **`command` looks handlers up on a plain object** (open, found in phase 4, ported as-is). `command(cmd)` indexes an object literal, so an inherited name such as `toString`, `valueOf` or `__proto__` finds an `Object.prototype` member instead of logging "Unknown command": `toString` returns harmlessly, `valueOf`/`hasOwnProperty` throw a TypeError and `__proto__` throws "handler is not a function", inside the socket's `command` handler. Only an authenticated socket can send it. Fix (phase 5, with the engine): look up own properties only (`Object.hasOwn`), so these log "Unknown command" like any other name.
+8. **Fixed in phase 5.** **`command` looked handlers up on a plain object** (found in phase 4, ported as-is then). `command(cmd)` indexes an object literal, so an inherited name such as `toString`, `valueOf` or `__proto__` finds an `Object.prototype` member instead of logging "Unknown command": `toString` returns harmlessly, `valueOf`/`hasOwnProperty` throw a TypeError and `__proto__` throws "handler is not a function", inside the socket's `command` handler. Only an authenticated socket can send it. Fix (phase 5, with the engine): `GrblController.command()` looks up own properties only (`Object.prototype.hasOwnProperty.call`), so these log "Unknown command" like any other name (checked against the fake controller: `valueOf`, `__proto__`, `toString`, `constructor`, `hasOwnProperty`). No protocol-diff scenario sends such a name, so the diff stays identical. The engine's `open` handler had the same plain-object lookup for `controllerType`; it now uses an own-property lookup too, so `constructor` etc. answer "Not supported controller".
 
 Phase 2–3 also showed where `protocol.ts` is looser than reality (fixed with the controller typing in phases 4–5): `GrblSettings` should be a `type` so `exchange.ts` can accept it; `GrblParserState` fields and modal groups are optional and any group may be an array; `FeederStatus.holdReason` may be absent.
 
@@ -73,8 +73,9 @@ The fake controller (`scripts/fake-controller.py -v`) logs every line it receive
 
 ```
 src/server/
-  backend.ts              # entry: config, engine, shutdown (exists, simplified)
-  session.ts              # JWT + host check (absorbs access-control.js)
+  backend.ts              # entry: config, engine, shutdown (typed; lazy imports so NODE_ENV is set first)
+  session.ts              # JWT + host check + handshake IP/user checks (absorbed access-control.js)
+  CNCJS_LICENSE           # CNCjs MIT licence (the code below derives from CNCjs 1.11.5)
   protocol.ts             # socket event/command names + payload types, shared with src/lib/cnc
   config/ConfigStore.ts   # rc file (~/.kinetiqrc), typed
   engine/SocketEngine.ts  # was CNCEngine: auth, list/open/close/command/write, port fallback
@@ -113,7 +114,7 @@ src/server/
 | 3 | Serial + streaming | `SerialPort`, `Sender`, `Feeder`, `Workflow`, `MessageSlot`, `GrblState` → TS. The buffer accounting (120-byte window, `ok`/`error` release) is ported line by line. | **high** |
 | 4 | Split the controller | `GrblController` → coordinator + `StatusPoller` + `JobRunner` + `commands`. Done in 2–3 commits, protocol diff after each. | **high** |
 | 5 | Engine + entry | `CNCEngine` → `SocketEngine`, auth into `session.ts`, typed `backend.ts`; `src/lib/cnc` imports `protocol.ts`; remove `allowJs`. | medium |
-| 6 | Hardware + docs | Short session on the machine (connect, jog, a real job with hold/resume/stop, probe, settings save); update `ARCHITECTURE.md`, `BACKEND_INTEGRATION.md`, `src/server/cnc/README.md`; merge to `main`. | — |
+| 6 | Hardware + docs | Short session on the machine (connect, jog, a real job with hold/resume/stop, probe, settings save); final pass over `ARCHITECTURE.md`, `BACKEND_INTEGRATION.md` (structure and provenance were updated in phase 5); merge to `main`. | — |
 | later | socket.io 4 | Server + client together, own branch. | medium |
 
 ## 7. Decisions (2026-11-09)

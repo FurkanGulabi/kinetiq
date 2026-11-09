@@ -2,7 +2,7 @@
 
 **Project:** Kinetiq: Advanced Motion Control
 **Question:** How does Kinetiq reuse the CNCjs backend while staying a **single Next.js application**?
-**Answer (approved 2026-11-08):** Option B, an **embedded backend runtime through a Next.js custom server**. This is one Node.js process and one package. It hosts the Next.js request handler **and** the CNCjs `CNCEngine` (Socket.IO 2 + serialport) on the same `http.Server`. The CNCjs GRBL server code is embedded in `src/server/cnc` with a few documented changes (D2 revised; `src/server/cnc/README.md`).
+**Answer (approved 2026-11-08):** Option B, an **embedded backend runtime through a Next.js custom server**. This is one Node.js process and one package. It hosts the Next.js request handler **and** the CNCjs `CNCEngine` (Socket.IO 2 + serialport) on the same `http.Server`. The CNCjs GRBL server code is embedded in `src/server/`, rewritten into TypeScript, with a few documented changes (D2 revised; §7.1).
 
 > **Approved.** D1–D4 (§9) were approved on 2026-11-08. A custom server is an official Next.js feature, not a separate backend; it replaces `next start` with `node dist/server.js`.
 
@@ -47,7 +47,7 @@
 
 ## 3. How CNCjs code gets into Kinetiq
 
-> **Superseded 2026-11-08 (D2 revised):** none of the ways below is used any more. The CNCjs GRBL server code was copied into Kinetiq as JavaScript (`src/server/cnc`, loaded by `src/server/backend.ts`; see `src/server/cnc/README.md`), so there is no fork build and no `cncjs-app` dependency. This section is kept as the record of the original evaluation.
+> **Superseded 2026-11-08 (D2 revised):** none of the ways below is used any more. The CNCjs GRBL server code was copied into Kinetiq as JavaScript (`src/server/cnc`, loaded by `src/server/backend.ts`) and has since been rewritten into TypeScript under `src/server/` (§7.1, `BACKEND_REWRITE_PLAN.md`), so there is no fork build and no `cncjs-app` dependency. This section is kept as the record of the original evaluation.
 
 CNCjs is not published as a library, so Kinetiq needs its transpiled server code. Three ways were evaluated:
 
@@ -78,7 +78,7 @@ Kinetiq instantiates the `CNCEngine` class itself rather than using the `cncengi
 │   ├── GET /api/kinetiq/session  ── handled by server.ts → { token } (JWT signed w/ settings.secret)│
 │   ├── /api/kinetiq/jobs/*       ── job library (src/server/jobs.ts)                               │
 │   ├── /api/kinetiq/machine-config/* ── FluidNC config editor (src/server/fluidnc/)                │
-│   ├── /socket.io/*              ── CNCjs CNCEngine (Socket.IO 2.2, JWT handshake)                 │
+│   ├── /socket.io/*              ── SocketEngine, was CNCEngine (Socket.IO 2.2, JWT handshake)     │
 │   │                                   └── GrblController ── Sender/Feeder/Workflow ── serialport ──┼──USB──▶ FluidNC (ESP32)
 │   └── everything else           ── Next.js request handler (App Router, single page)              │
 │                                                                                                   │
@@ -90,7 +90,7 @@ Kinetiq instantiates the `CNCEngine` class itself rather than using the `cncengi
 
 ### 4.1 Session token
 
-CNCEngine requires `?token=<JWT>` at handshake (`socketio-jwt`, `handshake: true`). The token is a JWT signed with `settings.secret`, the same secret the CNCjs bootstrap generates and stores in the rc file. The payload is `{ id, name }`; with no users configured, `{ id: '', name: '' }` is accepted (`api.users.js:74-83`, `access-control.js:39-57`).
+The engine (`src/server/engine/SocketEngine.ts`, was CNCjs's `CNCEngine`) requires `?token=<JWT>` at handshake (`socketio-jwt`, `handshake: true`). The token is a JWT signed with `settings.secret`, the same secret the CNCjs bootstrap generates and stores in the rc file. The payload is `{ id, name }`; with no users configured, `{ id: '', name: '' }` is accepted (`api.users.js:74-83`; `validateUser()` in `src/server/session.ts`, was `access-control.js:39-57`). After the token, `authorizeIPAddress()` (same file) rejects addresses outside the loopback and private ranges.
 
 Kinetiq's custom server handles `GET /api/kinetiq/session` itself (plus the job library and machine-config APIs, which require this token as `Authorization: Bearer`), before delegating to Next. It returns a token signed with `jsonwebtoken`, which is already a CNCjs dependency. Next Route Handlers are avoided here because they run in Next's bundled module graph and would not share the engine's `settings` singleton.
 
@@ -113,9 +113,9 @@ The browser opens one socket and then uses only the verified events: `list`, `op
 
 ### 5.1 Startup (`server.ts`)
 
-1. `process.env.NODE_ENV` is set (`development` or `production`). The backend `settings` module is evaluated on first `require`, so `src/server/backend.ts` is imported only after this.
-2. `loadBackend()` (`src/server/backend.ts`): set the log level (`KINETIQ_LOG_LEVEL`, default `info`); resolve the rc file to `KINETIQ_RC` or `~/.kinetiqrc` (created as `{}` with mode 0600 if missing). This is deliberately separate from `~/.cncrc`, so Kinetiq never mixes configuration with an installed CNCjs.
-3. `config.load(rcfile)`. If `config.get('secret')` is missing, generate one and `config.set('secret', …)`, as `server/index.js:59-67` does. Then `settings.secret = config.get('secret')` and `settings.rcfile = rcfile`. `new CNCEngine()` is constructed (not started).
+1. `process.env.NODE_ENV` is set (`development` or `production`). The backend `settings` module (`src/server/config/settings.ts`) reads it when it first evaluates, so `src/server/backend.ts` is imported only after this, and `loadBackend()` itself imports the settings, config, logger, store and engine modules lazily (dynamic `import()`).
+2. `await loadBackend()` (`src/server/backend.ts`): set the log level (`KINETIQ_LOG_LEVEL`, default `info`); resolve the rc file to `KINETIQ_RC` or `~/.kinetiqrc` (created as `{}` with mode 0600 if missing). This is deliberately separate from `~/.cncrc`, so Kinetiq never mixes configuration with an installed CNCjs.
+3. `config.load(rcfile)`. If `config.get('secret')` is missing, generate one and `config.set('secret', …)`, as `server/index.js:59-67` does. Then `settings.secret = config.get('secret')` and `settings.rcfile = rcfile`. `new SocketEngine()` is constructed (not started).
 4. `const server = http.createServer(handler)`, where `handler` serves `/api/kinetiq/session`, `/api/kinetiq/jobs/*` and `/api/kinetiq/machine-config/*`, and passes everything else to Next (503 "Kinetiq is starting" until Next is ready).
 5. `engine.start(server, 'Grbl')`. **Only `GrblController` is registered.**
 6. `const app = next({ dev, hostname, port, httpServer: server })`, then `await app.prepare()` and `app.getRequestHandler()`.
@@ -124,7 +124,7 @@ The browser opens one socket and then uses only the verified events: `list`, `op
 ### 5.2 Steady state
 
 - One `GrblController` per open port. Status is polled every 250 ms. State is broadcast to every socket that attached through `open`.
-- When a browser tab reloads, it reconnects, receives `startup`, emits `list`, sees `inuse: true`, and re-emits `open` for that port. CNCEngine attaches the socket and replays `serialport:open`, `controller:settings`, `controller:state`, `sender:status`, `workflow:state` and `gcode:load` (`GrblController.js:1298-1345`). **This is how Kinetiq resumes a session without touching the port.**
+- When a browser tab reloads, it reconnects, receives `startup`, emits `list`, sees `inuse: true`, and re-emits `open` for that port. SocketEngine attaches the socket and replays `serialport:open`, `controller:settings`, `controller:state`, `sender:status`, `workflow:state` and `gcode:load` (`GrblController.addConnection()`, was `GrblController.js:1298-1345`). **This is how Kinetiq resumes a session without touching the port.**
 
 ### 5.3 Shutdown (Kinetiq addition, uses existing interfaces only)
 
@@ -166,16 +166,40 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 
 **Contains:**
 - `server.ts`: bootstrap (§5.1), routing and shutdown (§5.3).
-- `src/server/backend.ts`: loads the embedded backend (rc file, secret, `CNCEngine`) with small typed interfaces for the modules it uses, and closes controllers on shutdown.
-- `src/server/session.ts`: the session endpoint (§4.1) and the auth check shared by the HTTP APIs.
+- `src/server/backend.ts`: loads the backend (rc file, secret, `SocketEngine`), typed against the real modules, and closes controllers on shutdown.
+- `src/server/session.ts`: the session endpoint (§4.1), the auth check shared by the HTTP APIs, and the socket handshake's IP and user checks (`authorizeIPAddress`, `validateUser`).
 - `src/server/jobs.ts`: the job library (`API_REFERENCE.md` §7.4).
 - `src/server/fluidnc/`: the FluidNC config editor API (`SETTINGS_EDITOR.md` §3). It sends `$` commands through `controller.writeln()` one at a time and, for saving, an XModem transfer on the raw port while the controller is in exclusive mode.
-- `src/server/cnc/`: the CNCjs GRBL backend itself (D2, revised).
+- The GRBL backend itself (D2, revised), CNCjs 1.11.5 rewritten into TypeScript (§7.1):
+  - `src/server/protocol.ts`: socket event and command names and payload types, shared with `src/lib/cnc`.
+  - `src/server/engine/SocketEngine.ts`: the Socket.IO 2 server (handshake, `list`/`open`/`close`/`command`/`write`/`writeln`, `startup`, the rc-ports fallback of `list`).
+  - `src/server/controller/`: `GrblController` (coordinator, socket fan-out), `StatusPoller`, `JobRunner`, `filters`, `commands`.
+  - `src/server/streaming/`: `Sender` (character counting), `Feeder`, `Workflow`, the `[expr]` / `%var=` macro language (`expressions.ts`) and `%wait` / `%msg` / M0 / M6 helpers (`builtins.ts`).
+  - `src/server/serial/SerialConnection.ts`, `src/server/grbl/` (constants, line parsers, `GrblRunner`).
+  - `src/server/config/` (settings, rc file store), `src/server/events/` (rc `events` → shell runner, §7.2), `store.ts`, `logger.ts`, `constants.ts`, `util/`.
 
 **Does not contain:**
-- Its own streaming code or G-code protocol parsing (that stays in the CNCjs code).
+- Its own streaming code or G-code protocol parsing beyond the ported CNCjs code.
 - The CNCjs REST API.
-- Any re-implementation of a CNCjs subsystem.
+- Any re-implementation of a CNCjs subsystem: the TypeScript files are line-for-line ports, checked with the protocol diff (`scripts/protocol-scenarios/`).
+
+### 7.1 Provenance (CNCjs)
+
+- **Source:** `CNCJS-fork/src/server` at commit `a3922a1bf` (CNCjs 1.11.5), copied into `src/server/cnc` as JavaScript on 2026-11-08 so Kinetiq no longer depends on `../CNCJS-fork`. The CNCjs MIT licence is in [`src/server/CNCJS_LICENSE`](../src/server/CNCJS_LICENSE); keep it with the code.
+- **Rewritten into TypeScript in phases 2–5** (`BACKEND_REWRITE_PLAN.md`, 2026-11-09/10), behaviour unchanged unless listed in the plan's §3a. Each file's header names the CNCjs file it came from (`was src/server/cnc/…`). `src/server/cnc/` no longer exists.
+- **Kinetiq changes** are marked in the code with `// Kinetiq:` or `// SECURITY (Kinetiq):` comments. The main ones: only the Grbl controller is registered (Marlin, Smoothie, TinyG/g2core removed); `list` answers with the rc `ports` when port detection fails; no `config:change` broadcast (it carried the JWT `secret`); `gcode:unload` (not `unload`) on reopen; M6 is always a manual tool-change pause (the `tool:change` routine, `tool.*` config and `lasertest:*` were removed); `GrblController.setExclusive()` for the settings editor's XModem upload; command names are looked up as own properties only; `settings.ts` holds only the fields the backend reads. Phase 1 removed the commands and events the UI never used (`BACKEND_REWRITE_PLAN.md` §3).
+- **Not carried over:** the Express app, REST API, i18n, views, the Marlin/Smoothie/TinyG controllers and the CNCjs CLI.
+
+### 7.2 Security rule: shell commands
+
+`src/server/events/TaskRunner.ts` runs shell commands. Today its only input is the `events` list in the rc file (`~/.kinetiqrc`), read by `src/server/events/EventTrigger.ts`. No socket or HTTP handler reaches it, and the only config value Kinetiq writes is `secret`.
+
+Keep it that way:
+- Never pass socket, HTTP or other frontend input to `taskRunner.run()`.
+- Never add an API that writes `events`, or anything else that is later handed to `run()`, into the config.
+- The planned Automation UI must offer a fixed allow-list of server-defined actions (for example "switch relay N on"), validated on the server, not free-form commands.
+
+The same rule is in the headers of `TaskRunner.ts`, `EventTrigger.ts` and `config/ConfigStore.ts`.
 
 ---
 
@@ -190,7 +214,7 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 | U10 | Dev-only: hot reload of `src/lib/cnc/client.ts` resets its module state while the page keeps the old socket, so actions silently do nothing until a page reload (observed in M1) | Development only | Reload the page after editing `client.ts`, or keep the socket on `globalThis` in dev. |
 | U3 | FluidNC hardware checks | F1, F2, F3, F4, F6, F7 and F15 were **observed on 2026-11-08** with FluidNC v4.0.1. F9 and F10 are partly observed (relative jogging, hold/resume/reset, feed override); absolute jog and `0x85` remain. | — |
 | U4 | Socket.IO 2.2 and Engine.IO 3 are old and carry published advisories (for example permissive default CORS before socket.io 2.4) | Local-only deployment limits exposure. The JWT handshake still applies. | Bind to loopback and add the Host-header check. Upgrading belongs in the fork, not in Kinetiq. |
-| U5 | `CNCJS-fork` must be built before Kinetiq can run | **Resolved (2026-11-08):** the backend is embedded in `src/server/cnc` (D2 revised); `npm install` is the only setup step. | — |
+| U5 | `CNCJS-fork` must be built before Kinetiq can run | **Resolved (2026-11-08):** the backend is embedded in `src/server/` (D2 revised; first as JavaScript in `src/server/cnc`, now TypeScript); `npm install` is the only setup step. | — |
 | U6 | `ignoreErrors` key mismatch (`state.controller.exception.ignoreErrors` vs the default `controller.exception.ignoreErrors`) | None (the safe default holds) | Leave as is. Kinetiq never sets either key. |
 | U7 | `remainingTime` is a line-count extrapolation | Inaccurate on uneven programs | Shown as "≈ estimate" (see `API_REFERENCE.md` §7). A better estimator is a future feature. |
 
@@ -201,6 +225,6 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 | ID | Decision | Recommendation (all approved) |
 |---|---|---|
 | **D1** | Use a Next.js **custom server** (`node dist/server.js`) to host CNCEngine in the same process | **Approve.** It is the only single-application design that keeps CNCjs unmodified and safe. |
-| **D2** | Consume CNCjs as a **fork build** (`file:../CNCJS-fork/dist/cncjs`, way B1) | Approve B1. B2 is the fallback. **Revised 2026-11-08:** the CNCjs GRBL server code now lives in `src/server/cnc` and Kinetiq no longer depends on `CNCJS-fork` (see `src/server/cnc/README.md`). |
+| **D2** | Consume CNCjs as a **fork build** (`file:../CNCJS-fork/dist/cncjs`, way B1) | Approve B1. B2 is the fallback. **Revised 2026-11-08:** the CNCjs GRBL server code now lives in `src/server/` (rewritten into TypeScript, §7.1) and Kinetiq no longer depends on `CNCJS-fork`. |
 | **D3** | Pin **`socket.io-client@2.x`** in the frontend (protocol lock-step with the CNCjs server) | Approve. It is required. |
 | **D4** | Minimal job and safety controls beyond pure monitoring: Load file (single file picker, not a file manager), Start/Pause/Resume/Stop in the Job widget, plus a persistent **Feed Hold** and **Reset** in the top bar | Approve. Without these a job cannot run, and a hold/reset control should always be reachable. Unlock (`$X`) and Home (`$H`) were later added as buttons at the user's request (2026-11-08). |

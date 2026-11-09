@@ -4,7 +4,7 @@
  * SECURITY RULE: the commands handed to the callback, and from there to events/TaskRunner.ts
  * (trigger 'system' = shell), come ONLY from the rc file's `events` entries (~/.kinetiqrc), which
  * only the machine owner can edit. Never from socket, HTTP or other frontend input.
- * See src/server/cnc/README.md, "Security rule: shell commands".
+ * See docs/BACKEND_INTEGRATION.md §7.2, "Security rule: shell commands".
  */
 import config from '../config/ConfigStore';
 

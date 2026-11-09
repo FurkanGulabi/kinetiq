@@ -7,3 +7,4 @@ next-env.d.ts
 
 # Python bytecode (scripts/fake-controller.py)
 __pycache__/
+graphify-out/

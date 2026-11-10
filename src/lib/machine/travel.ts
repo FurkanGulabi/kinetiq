@@ -2,9 +2,9 @@
  * Travel limits of the machine Kinetiq is built for (a DIY 3-axis router on FluidNC).
  *
  * The machine homes to the bottom-right corner (seen from above) and sets machine X0 Y0 there. From
- * home it can only move left (X−) and up (Y+), and there is no switch at the far ends: running into
- * them crashes the axis. Kinetiq therefore keeps every jog inside the envelope below and refuses to
- * start a job that does not fit in it.
+ * home it can only move left (X−) and up (Y+). Both ends have limit switches, so these limits are
+ * not crash protection: they define the work area. Kinetiq keeps every jog inside the envelope
+ * below and refuses to start a job that does not fit in it.
  *
  * Pure and dependency-free: used by the backend (TravelGuard) and by the UI (derive.ts).
  * All values are machine coordinates in millimetres.

@@ -1,8 +1,8 @@
 /**
  * Kinetiq travel limits, backend side (src/lib/machine/travel.ts has the envelope and the rules).
  *
- * The machine has no switch at the far end of X and Y, so the backend keeps jogs inside the
- * envelope itself:
+ * The backend keeps jogs inside the work-area envelope itself (the limit switches at both ends
+ * of X and Y are the hardware layer):
  *
  *   homed     which axes have a known machine position: set when a homing cycle the backend saw
  *             start (`$H`, `$HX`, …) ends in Idle; cleared when FluidNC restarts or raises an

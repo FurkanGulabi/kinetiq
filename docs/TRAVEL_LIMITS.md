@@ -1,6 +1,6 @@
 # Travel limits
 
-Kinetiq is set up for one machine: a DIY 3-axis router on FluidNC. It homes to the bottom-right corner (seen from above), which becomes machine X0 Y0. From there it can only move left (X−) and up (Y+). There is no switch at the far ends, so running into them crashes the axis. Z has no switch and no homing, and is not limited.
+Kinetiq is set up for one machine: a DIY 3-axis router on FluidNC. It homes to the bottom-right corner (seen from above), which becomes machine X0 Y0. From there it can only move left (X−) and up (Y+). Both ends of X and Y have limit switches, so the hardware stops a crash; these limits are about the work area: they keep jogs inside it and check that a loaded program fits with the current work zero. Z has no switch and no homing, and is not limited.
 
 ## The numbers
 

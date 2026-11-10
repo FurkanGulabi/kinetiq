@@ -223,6 +223,7 @@ export async function startClient(): Promise<void> {
   });
 
   on('workflow:state', (workflow) => setState((s) => ({ ...s, workflow })));
+  on('machine:limits', (limits) => setState((s) => ({ ...s, limits })));
   on('sender:status', (sender) => setState((s) => ({ ...s, sender })));
   on('feeder:status', (feeder) => setState((s) => ({ ...s, feeder })));
   on('gcode:load', (name, gcode, context) => {

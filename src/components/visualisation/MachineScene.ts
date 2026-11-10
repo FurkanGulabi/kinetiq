@@ -28,6 +28,8 @@ const COLORS = {
   ink2: 0xa1a7af,
   accent: 0x5ab8ff,
   accentDim: 0x2f6a94,
+  limit: 0x7d848d,
+  limitOver: 0xff5c5c,
 };
 
 /** Toolpath colours (rgb + alpha): remaining feeds carry the accent; passed lines are greyed out. */
@@ -158,6 +160,8 @@ export class MachineScene {
   private dropLine: THREE.Line;
   private footprint: THREE.Mesh;
   private machineOrigin = new THREE.Group();
+  /** Travel-limit rectangle (machine XY), drawn on the work Z=0 plane. */
+  private travelLimits: THREE.LineLoop;
   private trailGeometry = new THREE.BufferGeometry();
   private trailPositions = new Float32Array(MAX_TRAIL_POINTS * 3);
   private trailCount = 0;
@@ -238,6 +242,13 @@ export class MachineScene {
     const m0 = makeLabel('M0', `${labelCls} kq-label--muted`);
     m0.position.set(-6, -6, 0);
     this.machineOrigin.add(m0);
+    this.travelLimits = new THREE.LineLoop(
+      new THREE.BufferGeometry(),
+      new THREE.LineDashedMaterial({ color: COLORS.limit, dashSize: 4, gapSize: 3 }),
+    );
+    this.travelLimits.visible = false;
+    this.travelLimits.frustumCulled = false;
+    this.machineOrigin.add(this.travelLimits);
     this.machineOrigin.visible = false;
     this.scene.add(this.machineOrigin);
 
@@ -298,6 +309,7 @@ export class MachineScene {
 
     this.machineOrigin.position.copy(position.wco).multiplyScalar(-1);
     this.machineOrigin.visible = true;
+    this.travelLimits.position.z = position.wco.z; // back onto the work Z=0 plane
 
     const first = this.target === null;
     this.target = position.work.clone();
@@ -305,6 +317,26 @@ export class MachineScene {
       this.displayed = position.work.clone();
       this.applyDisplayed();
       if (first) this.fit();
+    }
+    this.requestRender();
+  }
+
+  /**
+   * The XY travel limits in machine coordinates (mm), or null to hide them. `exceeded` paints the
+   * rectangle red: the loaded program leaves it.
+   */
+  setTravelLimits(rect: { xMin: number; xMax: number; yMin: number; yMax: number } | null, exceeded = false): void {
+    this.travelLimits.visible = rect !== null;
+    if (rect) {
+      this.travelLimits.geometry.setFromPoints([
+        new THREE.Vector3(rect.xMin, rect.yMin, 0),
+        new THREE.Vector3(rect.xMax, rect.yMin, 0),
+        new THREE.Vector3(rect.xMax, rect.yMax, 0),
+        new THREE.Vector3(rect.xMin, rect.yMax, 0),
+        new THREE.Vector3(rect.xMin, rect.yMin, 0),
+      ]);
+      this.travelLimits.computeLineDistances();
+      (this.travelLimits.material as THREE.LineDashedMaterial).color.setHex(exceeded ? COLORS.limitOver : COLORS.limit);
     }
     this.requestRender();
   }

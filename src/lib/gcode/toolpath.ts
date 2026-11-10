@@ -34,6 +34,14 @@ export interface Toolpath {
   bounds: { min: [number, number, number]; max: [number, number, number] } | null;
   units: 'mm' | 'in' | 'mixed';
   warnings: string[];
+  /**
+   * For the travel-limit check (lib/machine/travel.ts): targets of G53 moves (machine coordinates,
+   * mm; NaN where no G53 move names the axis), what `bounds` cannot account for in X/Y, and the
+   * work coordinate systems the program selects.
+   */
+  machineBounds: { min: [number, number, number]; max: [number, number, number] };
+  unchecked: string[];
+  wcsUsed: string[];
 }
 
 const ARC_TOLERANCE_MM = 0.01; // max chord deviation
@@ -145,6 +153,10 @@ export function parseToolpath(gcode: string): Toolpath {
   const max = [-Infinity, -Infinity, -Infinity];
   const fmin = [Infinity, Infinity, Infinity];
   const fmax = [-Infinity, -Infinity, -Infinity];
+  const mmin: [number, number, number] = [NaN, NaN, NaN];
+  const mmax: [number, number, number] = [NaN, NaN, NaN];
+  const unchecked = new Set<string>();
+  const wcsUsed = new Set<string>();
 
   let index = -1; // Sender line index
   const addSegment = (a: number[], b: number[], kind: 0 | 1, line: number) => {
@@ -184,6 +196,7 @@ export function parseToolpath(gcode: string): Toolpath {
     }
 
     let nonModalMove = false; // a G-word that consumes axis words (G10, G28, G30, G53, G92, G4)
+    let nonModalWord = '';
     let skipDraw = false;
     for (const g of gWords) {
       const gi = Math.round(g * 10);
@@ -216,6 +229,10 @@ export function parseToolpath(gcode: string): Toolpath {
           break;
         case 100: case 280: case 300: case 920:
           nonModalMove = true;
+          nonModalWord = `G${g}`;
+          break;
+        case 540: case 550: case 560: case 570: case 580: case 590:
+          wcsUsed.add(`G${g}`);
           break;
         case 530:
           skipDraw = true; // machine coordinates: work position unknown without WCO
@@ -241,18 +258,36 @@ export function parseToolpath(gcode: string): Toolpath {
     if (nonModalMove) {
       // G28/G30 go to stored positions; G92/G10 change offsets: the work position is no longer known.
       known[0] = known[1] = known[2] = false;
+      // For the travel-limit check: only X/Y matter (Z is not limited). G28/G30 with no axis
+      // words move every axis.
+      const stored = nonModalWord === 'G28' || nonModalWord === 'G30';
+      if ('X' in words || 'Y' in words || (stored && !hasAxis)) {
+        unchecked.add(stored ? `${nonModalWord} moves to a stored position` : `${nonModalWord} changes the work offset`);
+      }
       continue;
     }
     if (motion === null || (!hasAxis && !(motion >= 2 && hasArcWords))) continue;
 
     const axes = ['X', 'Y', 'Z'];
     if (skipDraw) {
-      for (let k = 0; k < 3; k++) if (axes[k] in words) known[k] = false;
+      const machineScale = inches ? 25.4 : 1;
+      for (let k = 0; k < 3; k++) {
+        if (!(axes[k] in words)) continue;
+        known[k] = false;
+        const t = words[axes[k]] * machineScale;
+        mmin[k] = Number.isNaN(mmin[k]) ? t : Math.min(mmin[k], t);
+        mmax[k] = Number.isNaN(mmax[k]) ? t : Math.max(mmax[k], t);
+      }
       continue;
     }
     // Relative moves from an unknown position are drawn relative to the program start (0).
     if (relative) {
-      for (let k = 0; k < 3; k++) if (!known[k]) { pos[k] = 0; known[k] = true; }
+      for (let k = 0; k < 3; k++) {
+        if (known[k]) continue;
+        if (k < 2 && axes[k] in words) unchecked.add('relative moves (G91) from wherever the machine is at the start');
+        pos[k] = 0;
+        known[k] = true;
+      }
     }
 
     const scale = inches ? 25.4 : 1;
@@ -354,6 +389,9 @@ export function parseToolpath(gcode: string): Toolpath {
     bounds: box(min, max),
     units: sawInch && sawMm ? 'mixed' : sawInch ? 'in' : 'mm',
     warnings,
+    machineBounds: { min: mmin, max: mmax },
+    unchecked: [...unchecked],
+    wcsUsed: [...wcsUsed],
   };
 }
 

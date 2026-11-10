@@ -24,7 +24,7 @@ import {
   type JogAxis,
   type Units,
 } from '@/lib/cnc/commands';
-import { axisControlsView, jogView, positionView, reportUnits } from '@/lib/cnc/derive';
+import { axisControlsView, axisNotHomed, jogDirectionView, jogView, positionView, reportUnits, travelView } from '@/lib/cnc/derive';
 import { useMachine } from '@/lib/cnc/store';
 import { Button } from '@/components/ui/Button';
 import { FloatingWidget } from '@/components/ui/FloatingWidget';
@@ -101,6 +101,7 @@ function JogButton({
   direction,
   icon,
   disabled,
+  reason,
   onJog,
   className = '',
 }: {
@@ -108,6 +109,8 @@ function JogButton({
   direction: 1 | -1;
   icon: React.ReactNode;
   disabled: boolean;
+  /** Why this direction is off (not homed, at the travel limit). */
+  reason?: string;
   onJog: (axis: JogAxis, direction: 1 | -1) => void;
   className?: string;
 }) {
@@ -116,6 +119,7 @@ function JogButton({
     <button
       type="button"
       aria-label={`Jog ${axis} ${direction > 0 ? 'positive' : 'negative'}`}
+      title={disabled ? reason : undefined}
       disabled={disabled}
       onClick={() => onJog(axis, direction)}
       className={`pressable flex h-[52px] w-[52px] flex-col items-center justify-center gap-0.5 rounded-md border border-line bg-surface-2 text-ink hover-fine:border-ink-3 disabled:cursor-not-allowed disabled:text-ink-3 disabled:hover:border-line ${className}`}
@@ -126,6 +130,10 @@ function JogButton({
       </span>
     </button>
   );
+}
+
+function fmtRoom(room: number | null, units: Units): string {
+  return room === null ? '—' : room.toFixed(units === 'in' ? 2 : 1);
 }
 
 export function PositionPanel() {
@@ -158,7 +166,19 @@ export function PositionPanel() {
   const atZero =
     work.X !== null && work.Y !== null && Math.abs(work.X) < 1e-4 && Math.abs(work.Y) < 1e-4 && (!includeZ || (work.Z !== null && Math.abs(work.Z) < 1e-4));
   const zBelowZero = work.Z !== null && work.Z < 0;
-  const goZero = axisControls.goTo.enabled && !atZero ? { enabled: true } : { enabled: false, reason: atZero ? 'Already at work zero' : axisControls.goTo.reason };
+  const travel = travelView(machine);
+  const zeroNotHomed = axisNotHomed(machine, 'X') ?? axisNotHomed(machine, 'Y') ?? (includeZ ? axisNotHomed(machine, 'Z') : null);
+  const goZero =
+    axisControls.goTo.enabled && !atZero && !zeroNotHomed
+      ? { enabled: true }
+      : { enabled: false, reason: atZero ? 'Already at work zero' : axisControls.goTo.reason ?? zeroNotHomed ?? undefined };
+  /** Jog-pad button state: the shared jog gating, then this direction's travel limit. */
+  const pad = (axis: JogAxis, direction: 1 | -1) => {
+    const dir = jogDirectionView(machine, axis, direction);
+    return { disabled: !jog.canJog || !dir.enabled, reason: jog.canJog ? dir.reason : jog.reason ?? undefined };
+  };
+  const limitedAxes = (['X', 'Y', 'Z'] as const).filter((a) => travel.axes[a].range);
+  const notHomedAxes = limitedAxes.filter((a) => !travel.axes[a].homed);
   let zeroPreview: string;
   if (!includeZ) {
     zeroPreview = `Move to X0 Y0 at ${feed} ${units}/min — Z stays at ${work.Z !== null ? fmt(work.Z) : '—'}`;
@@ -175,7 +195,7 @@ export function PositionPanel() {
   };
 
   const onJog = (axis: JogAxis, direction: 1 | -1) => {
-    if (!jog.canJog) return;
+    if (pad(axis, direction).disabled) return;
     sendGcode(jogLine(axis, direction, step, feed, units));
   };
 
@@ -233,7 +253,11 @@ export function PositionPanel() {
             units={units}
             feed={feed}
             wcs={position.wcs}
-            controls={axisControls}
+            controls={
+              axisControls.goTo.enabled && axisNotHomed(machine, a.axis)
+                ? { ...axisControls, goTo: { enabled: false, reason: axisNotHomed(machine, a.axis)! } }
+                : axisControls
+            }
             onPreview={onPreview}
           />
         ))}
@@ -246,9 +270,9 @@ export function PositionPanel() {
       <div className="flex items-start justify-center gap-6">
         <div className="grid grid-cols-3 grid-rows-3 gap-1.5" role="group" aria-label="XY jog">
           <span />
-          <JogButton axis="Y" direction={1} icon={<ArrowUp size={arrow} />} disabled={!jog.canJog} onJog={onJog} />
+          <JogButton axis="Y" direction={1} icon={<ArrowUp size={arrow} />} {...pad('Y', 1)} onJog={onJog} />
           <span />
-          <JogButton axis="X" direction={-1} icon={<ArrowLeft size={arrow} />} disabled={!jog.canJog} onJog={onJog} />
+          <JogButton axis="X" direction={-1} icon={<ArrowLeft size={arrow} />} {...pad('X', -1)} onJog={onJog} />
           <button
             type="button"
             aria-label="Stop jog"
@@ -259,17 +283,28 @@ export function PositionPanel() {
           >
             <Square size={16} fill="currentColor" aria-hidden />
           </button>
-          <JogButton axis="X" direction={1} icon={<ArrowRight size={arrow} />} disabled={!jog.canJog} onJog={onJog} />
+          <JogButton axis="X" direction={1} icon={<ArrowRight size={arrow} />} {...pad('X', 1)} onJog={onJog} />
           <span />
-          <JogButton axis="Y" direction={-1} icon={<ArrowDown size={arrow} />} disabled={!jog.canJog} onJog={onJog} />
+          <JogButton axis="Y" direction={-1} icon={<ArrowDown size={arrow} />} {...pad('Y', -1)} onJog={onJog} />
           <span />
         </div>
         <div className="grid grid-rows-3 gap-1.5" role="group" aria-label="Z jog">
-          <JogButton axis="Z" direction={1} icon={<ArrowUp size={arrow} />} disabled={!jog.canJog} onJog={onJog} />
+          <JogButton axis="Z" direction={1} icon={<ArrowUp size={arrow} />} {...pad('Z', 1)} onJog={onJog} />
           <span />
-          <JogButton axis="Z" direction={-1} icon={<ArrowDown size={arrow} />} disabled={!jog.canJog} onJog={onJog} />
+          <JogButton axis="Z" direction={-1} icon={<ArrowDown size={arrow} />} {...pad('Z', -1)} onJog={onJog} />
         </div>
       </div>
+
+      {/* Travel limits: room left on each limited axis, or what to home */}
+      {travel.active && position.ready ? (
+        <p className={`mt-3 text-center font-mono text-[11px] tabular-nums ${notHomedAxes.length ? 'text-warn' : 'text-ink-3'}`}>
+          {notHomedAxes.length
+            ? `${notHomedAxes.join(' and ')} not homed — home the machine to move ${notHomedAxes.join(' and ')}`
+            : limitedAxes
+                .map((a) => `${a}− ${fmtRoom(travel.axes[a].roomNeg, units)} · ${a}+ ${fmtRoom(travel.axes[a].roomPos, units)}`)
+                .join(' · ') + ` ${units} to the travel limits`}
+        </p>
+      ) : null}
 
       {/* Go to work zero */}
       <div className="mt-4 flex items-center justify-center gap-4">

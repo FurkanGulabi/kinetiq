@@ -28,6 +28,8 @@ npm run build && npm start
 
 Kinetiq listens on `http://127.0.0.1:8000`. Override with `KINETIQ_PORT` / `KINETIQ_HOST`. Configuration lives in `~/.kinetiqrc` (override with `KINETIQ_RC`). Uploaded jobs are kept in `~/.kinetiq/jobs` and FluidNC config backups in `~/.kinetiq/config-backups` (override with `KINETIQ_JOBS_DIR` / `KINETIQ_CONFIG_BACKUP_DIR`). `KINETIQ_LOG_LEVEL` sets the backend log level (default `info`).
 
+Kinetiq keeps jogs and jobs inside the travel limits of the machine it is built for ([`docs/TRAVEL_LIMITS.md`](docs/TRAVEL_LIMITS.md)); `KINETIQ_TRAVEL_LIMITS=off` disables that.
+
 Type-check app and server with `npm run typecheck`.
 
 No machine at hand? Run a fake FluidNC controller on a pseudo-terminal (macOS / Linux, Python 3):

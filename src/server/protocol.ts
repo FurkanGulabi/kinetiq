@@ -24,6 +24,9 @@
  *     (macros, watch directory, CNCjs autolevel, Grbl:* duplicates, command aliases, sleep,
  *     rapid overrides, feeder:* and statusreport); they are no longer part of the protocol.
  */
+import type { MachineLimits } from '../lib/machine/travel';
+
+export type { MachineLimits };
 
 // ---------------------------------------------------------------------------------------------
 // Shared building blocks
@@ -328,6 +331,8 @@ export interface ServerEvents {
   'sender:status': (status: SenderStatus) => void;
   /** Every workflow transition, and on attach. */
   'workflow:state': (state: WorkflowState) => void;
+  /** Kinetiq travel limits: the envelope and which axes are homed. On attach and when it changes. */
+  'machine:limits': (limits: MachineLimits) => void;
   /**
    * A program was loaded, or a socket attached while one is loaded. `gcode` is the stored text,
    * i.e. the caller's G-code plus "\n%wait ; Wait for the planner to empty". `context` is the
@@ -361,6 +366,7 @@ export const SERVER_EVENTS = [
   'feeder:status',
   'sender:status',
   'workflow:state',
+  'machine:limits',
   'gcode:load',
   'gcode:unload',
   'task:start',

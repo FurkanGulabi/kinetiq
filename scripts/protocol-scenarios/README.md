@@ -43,6 +43,7 @@ The fake writes one record per received unit: `<ms since start>\t<record>`. A re
 | `07-probe-miss` | `--probe-miss` | The same probe, failing with `ALARM:5`, then Unlock |
 | `08-settings-editor` | | Settings HTTP API: read, save an edited `config.yaml` (XModem upload in exclusive mode, swap, verify), restart (`$Bye`), read again to check the restart loaded it |
 | `09-leveling` | | Z probe (plate 0), the `leveling/run.ts` 3×3 probe grid over 20×20 mm, then `fixtures/job-level.nc` compensated with `compensate()` and run |
+| `10-travel-limits` | | Travel limits on (`KINETIQ_TRAVEL_LIMITS=on`, off in every other scenario): X jog blocked before homing, Z jog sent, Home, jogs inside, shortened to the limit and blocked at it, two queued jogs, a jog typed in the console. See docs/TRAVEL_LIMITS.md |
 
 ### Reproducible timing
 

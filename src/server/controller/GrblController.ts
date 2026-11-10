@@ -77,6 +77,7 @@ import type {
 } from '../protocol';
 import StatusPoller from './StatusPoller';
 import JobRunner from './JobRunner';
+import TravelGuard from './TravelGuard';
 import { createCommandTable } from './commands';
 import type { CommandTable } from './commands';
 import {
@@ -224,6 +225,9 @@ class GrblController {
   // gcode:* commands and the Sender / Workflow events
   readonly jobs: JobRunner = new JobRunner(this);
 
+  // Kinetiq: travel limits (homed axes, jog limiting)
+  readonly travel: TravelGuard = new TravelGuard(this);
+
   // command() handlers
   readonly commands: CommandTable = createCommandTable(this);
 
@@ -331,6 +335,7 @@ class GrblController {
       }
 
       this.poller.onStatus(res);
+      this.travel.onStatus(res.activeState);
     });
 
     this.runner.on('ok', (res: WithRaw<GrblOkPayload>) => {
@@ -373,6 +378,7 @@ class GrblController {
 
     this.runner.on('alarm', (res: WithRaw<GrblAlarmPayload>) => {
       const code = Number(res.message) || undefined;
+      this.travel.onAlarm(code);
       const alarm = _.find(GRBL_ALARMS, { code: code });
 
       if (alarm) {
@@ -410,6 +416,7 @@ class GrblController {
 
     this.runner.on('startup', (res: WithRaw<GrblStartupPayload>) => {
       this.emit('serialport:read', res.raw);
+      this.travel.onStartup();
 
       if (!this.ready) {
         // The startup message always prints upon startup, after a reset, or at program end.
@@ -761,6 +768,8 @@ class GrblController {
       // workflow state
       socket.emit('workflow:state', this.workflow.state);
     }
+    // Kinetiq: travel limits and homed axes
+    socket.emit('machine:limits', this.travel.toJSON());
   }
 
   removeConnection(socket: ControllerSocket): void {
@@ -812,6 +821,18 @@ class GrblController {
     }
 
     const cmd = data.trim();
+
+    // Kinetiq: a jog typed in the console is held to the travel limits like any other jog.
+    if (/^\$J\s*=/i.test(cmd)) {
+      const jog = this.travel.filterJog(cmd);
+      if (jog === null) {
+        return;
+      }
+      if (jog !== cmd) {
+        data = jog + '\n';
+      }
+    }
+
     this.poller.onWrite(cmd);
 
     this.emit('serialport:write', data, {

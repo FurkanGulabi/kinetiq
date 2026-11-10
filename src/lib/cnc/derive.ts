@@ -2,6 +2,8 @@
  * Pure derivations from MachineState to UI state. All gating rules live here.
  * Connection states follow docs/API_REFERENCE.md §5.2 — no states the backend cannot support.
  */
+import { toolpathFor } from '@/lib/gcode/toolpath';
+import { AXIS_KEYS, checkFit, LIMIT_EPSILON_MM, type AxisKey, type AxisRange } from '@/lib/machine/travel';
 import type { MachineState } from './store';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -446,6 +448,7 @@ export function jobView(s: MachineState, now: number): JobView {
   else if (s.feeder?.pending) start = off('Waiting for the previous command to be accepted');
   else if (busyReason(s)) start = off(busyReason(s)!);
   else if (s.program.leveling && levelingDrift(s, s.program.leveling)) start = off(levelingDrift(s, s.program.leveling)!);
+  else if (programFitView(s).blocks) start = off(programFitView(s).blocks!);
   else start = on;
 
   const pauseMode: 'pause' | 'resume' = s.workflow === 'paused' ? 'resume' : 'pause';
@@ -605,4 +608,141 @@ export function levelingDrift(s: MachineState, leveling: { wcs: string; wco: { x
   if (!wco) return 'Waiting for the work position';
   const moved = (['x', 'y', 'z'] as const).filter((a) => Math.abs(wco[a] - leveling.wco[a]) > 0.005);
   return moved.length ? `Work ${moved.map((a) => a.toUpperCase()).join('/')} zero changed since leveling: probe the height map again` : null;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Travel limits — lib/machine/travel.ts (the backend enforces jogs; this is what the UI shows)
+ * ---------------------------------------------------------------------------------------------- */
+
+export interface AxisTravel {
+  /** Allowed machine range (mm); null = Kinetiq does not limit this axis. */
+  range: AxisRange | null;
+  homed: boolean;
+  /** Distance left to the − and + limit, in report units; null when not limited or not known. */
+  roomNeg: number | null;
+  roomPos: number | null;
+}
+
+/** Machine position in mm (the status report is in `$13` units). */
+function machinePositionMm(s: MachineState): Record<AxisKey, number> {
+  const mpos = s.controller.state?.status.mpos;
+  const scale = reportUnits(s) === 'in' ? 25.4 : 1;
+  const mm = (a: AxisKey) => (mpos?.[a] === undefined || mpos[a] === '' ? NaN : Number(mpos[a]) * scale);
+  return { x: mm('x'), y: mm('y'), z: mm('z') };
+}
+
+/** Work offset (machine − work) in mm. */
+function workOffsetMm(s: MachineState): Record<AxisKey, number> | null {
+  const wco = workOffset(s);
+  if (!wco) return null;
+  const scale = reportUnits(s) === 'in' ? 25.4 : 1;
+  return { x: wco.x * scale, y: wco.y * scale, z: wco.z * scale };
+}
+
+/** Per-axis travel state. `active` is false when the backend has travel limits turned off. */
+export function travelView(s: MachineState): { active: boolean; axes: Record<'X' | 'Y' | 'Z', AxisTravel> } {
+  const envelope = s.limits?.envelope ?? null;
+  const pos = machinePositionMm(s);
+  const scale = reportUnits(s) === 'in' ? 25.4 : 1;
+  const axis = (a: AxisKey): AxisTravel => {
+    const range = envelope?.[a] ?? null;
+    const homed = s.limits?.homed[a] ?? false;
+    const known = range !== null && homed && Number.isFinite(pos[a]);
+    return {
+      range,
+      homed,
+      roomNeg: known ? Math.max(0, pos[a] - range.min) / scale : null,
+      roomPos: known ? Math.max(0, range.max - pos[a]) / scale : null,
+    };
+  };
+  return { active: envelope !== null, axes: { X: axis('x'), Y: axis('y'), Z: axis('z') } };
+}
+
+/** Why an axis must not be moved yet (limited but not homed), or null. */
+export function axisNotHomed(s: MachineState, axis: 'X' | 'Y' | 'Z'): string | null {
+  const t = travelView(s).axes[axis];
+  return t.range && !t.homed ? `${axis} is not homed: home the machine first (its position is not known)` : null;
+}
+
+/** One jog-pad button: off when the axis is not homed or already at the limit in that direction. */
+export function jogDirectionView(s: MachineState, axis: 'X' | 'Y' | 'Z', direction: 1 | -1): ControlState {
+  const notHomed = axisNotHomed(s, axis);
+  if (notHomed) return { enabled: false, reason: notHomed };
+  const t = travelView(s).axes[axis];
+  const room = direction > 0 ? t.roomPos : t.roomNeg;
+  if (room !== null && room * (reportUnits(s) === 'in' ? 25.4 : 1) <= LIMIT_EPSILON_MM) {
+    return { enabled: false, reason: `${axis}${direction > 0 ? '+' : '−'} is at the travel limit` };
+  }
+  return { enabled: true };
+}
+
+export interface ProgramFitView {
+  /** Set when the job must not start: not homed, or it does not fit. */
+  blocks: string | null;
+  /** 'off' = travel limits off or no program. */
+  status: 'off' | 'unknown' | 'fits' | 'overflow';
+  /** Sides the program exceeds, e.g. "X− by 12.5 mm". */
+  overflows: string[];
+  /** Parts of the program the check cannot cover (not blocking; the firmware's soft limits still apply). */
+  unchecked: string[];
+}
+
+const NO_FIT: ProgramFitView = { blocks: null, status: 'off', overflows: [], unchecked: [] };
+let fitCache: { key: string; gcode: string; view: ProgramFitView } | null = null;
+
+/**
+ * Does the loaded program fit inside the travel limits with the current work zero? Checked in
+ * machine coordinates: the toolpath bounds (work) plus the work offset, against the envelope.
+ */
+export function programFitView(s: MachineState): ProgramFitView {
+  const envelope = s.limits?.envelope;
+  const gcode = s.program?.gcode;
+  if (!envelope || !gcode) return NO_FIT;
+
+  const limited = AXIS_KEYS.filter((a) => envelope[a] !== null);
+  const notHomed = limited.filter((a) => !s.limits?.homed[a]);
+  if (notHomed.length) {
+    const names = notHomed.map((a) => a.toUpperCase()).join(' and ');
+    return { blocks: `Home the machine first: ${names} is not homed, so the job cannot be checked against the travel limits`, status: 'unknown', overflows: [], unchecked: [] };
+  }
+  const wco = workOffsetMm(s);
+  if (!wco) return { blocks: 'Waiting for the work position', status: 'unknown', overflows: [], unchecked: [] };
+
+  const wcs = s.controller.state?.parserstate?.modal?.wcs || 'G54';
+  const key = `${wcs}|${limited.map((a) => wco[a].toFixed(3)).join(',')}`;
+  if (fitCache && fitCache.gcode === gcode && fitCache.key === key) return fitCache.view;
+
+  const fit = checkFit(toolpathFor(gcode), envelope, wco, wcs);
+  const view: ProgramFitView = {
+    blocks: fit.fits ? null : `Does not fit in the travel limits: ${fit.overflows.join(', ')}. Move the work zero or the job.`,
+    status: fit.fits ? 'fits' : 'overflow',
+    overflows: fit.overflows,
+    unchecked: fit.unchecked,
+  };
+  fitCache = { key, gcode, view };
+  return view;
+}
+
+/**
+ * Why a rectangle in work coordinates (mm) cannot be reached: an axis is not homed or the
+ * area leaves the travel limits. null when it is fine or travel limits are off. Used for the
+ * height-map probing grid.
+ */
+export function workAreaFit(s: MachineState, area: { xMin: number; xMax: number; yMin: number; yMax: number }): string | null {
+  const envelope = s.limits?.envelope;
+  if (!envelope) return null;
+  for (const axis of ['X', 'Y'] as const) {
+    const notHomed = axisNotHomed(s, axis);
+    if (notHomed) return notHomed;
+  }
+  const wco = workOffsetMm(s);
+  if (!wco) return 'Waiting for the work position';
+  const extent = {
+    bounds: { min: [area.xMin, area.yMin, 0] as [number, number, number], max: [area.xMax, area.yMax, 0] as [number, number, number] },
+    machineBounds: { min: [NaN, NaN, NaN] as [number, number, number], max: [NaN, NaN, NaN] as [number, number, number] },
+    unchecked: [],
+    wcsUsed: [],
+  };
+  const fit = checkFit(extent, { ...envelope, z: null }, wco, '');
+  return fit.fits ? null : `The area leaves the travel limits: ${fit.overflows.join(', ')}`;
 }

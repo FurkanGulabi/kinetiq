@@ -10,6 +10,7 @@ import type {
   FeederStatus,
   GrblSettings,
   GrblState,
+  MachineLimits,
   SenderStatus,
   SerialPortInfo,
   WorkflowState,
@@ -42,6 +43,8 @@ export interface MachineState {
     settings: GrblSettings | null;
     firmware: string | null; // e.g. "FluidNC v3.7.8", parsed from the startup banner
   };
+  /** Kinetiq travel limits and homed axes (`machine:limits`); null until the backend has sent them. */
+  limits: MachineLimits | null;
   workflow: WorkflowState;
   sender: SenderStatus | null;
   feeder: FeederStatus | null;
@@ -118,6 +121,7 @@ const initialState: MachineState = {
     error: null,
   },
   controller: { type: null, state: null, settings: null, firmware: null },
+  limits: null,
   workflow: 'idle',
   sender: null,
   feeder: null,
@@ -165,6 +169,7 @@ export function resetMachineState(prev: MachineState): MachineState {
   return {
     ...prev,
     controller: initialState.controller,
+    limits: null,
     workflow: 'idle',
     sender: null,
     feeder: null,

@@ -596,6 +596,8 @@ interface Scenario {
   description: string;
   fakeArgs?: string[];
   allowedStart?: string[];
+  /** Run the server with Kinetiq travel limits on (default off: the fake is not that machine). */
+  travelLimits?: boolean;
   run(s: Session): Promise<void>;
 }
 
@@ -772,6 +774,47 @@ const SCENARIOS: Record<string, Scenario> = {
       await s.waitIdle();
     },
   },
+
+  '10-travel-limits': {
+    description: 'travel limits: jogs blocked until homed, then shortened or blocked at the envelope',
+    travelLimits: true,
+    async run(s) {
+      const blocked = (label: string) => s.nextRead((l) => l.startsWith('[MSG:WARN: Kinetiq: jog not sent'), 5000, `blocked: ${label}`);
+      const sent = (label: string) => s.nextRead((l) => l === 'ok' || /^error:/.test(l), 10000, `ok for ${label}`);
+      const jog = async (axis: 'X' | 'Y' | 'Z', dir: 1 | -1, step: number, expect: 'sent' | 'blocked') => {
+        const label = `jog ${axis}${dir * step}`;
+        const done = expect === 'sent' ? sent(label) : blocked(label);
+        s.gcode(jogLine(axis, dir, step, 1000, 'mm'));
+        await done;
+        await s.waitIdle();
+      };
+      // Not homed: X and Y do not move, Z (not limited) does.
+      await jog('X', -1, 10, 'blocked');
+      await jog('Z', -1, 5, 'sent');
+      // Home ($H → Home → Idle): X and Y are homed at machine 0, 0.
+      const homed = s.nextRead((l) => l === 'ok', 15000, 'ok for $H');
+      s.command('homing');
+      await homed;
+      await s.waitIdle();
+      await sleep(600); // a status report after the cycle, so the backend has seen Idle
+      await jog('X', -1, 150, 'sent'); // inside
+      await jog('X', -1, 100, 'sent'); // shortened to the far limit
+      await jog('X', -1, 10, 'blocked'); // at the limit
+      await jog('Y', -1, 10, 'blocked'); // towards the home switch
+      await jog('Y', 1, 10, 'sent');
+      // Two presses queued at once: the second starts where the first will end.
+      const second = s.trace.waitFor((t) => t === '$J=G53 G90 G21 X-1 F1000', 15000, 'second queued jog, shortened');
+      s.gcode(jogLine('X', 1, 100, 1000, 'mm'));
+      s.gcode(jogLine('X', 1, 100, 1000, 'mm'));
+      await second;
+      await s.waitIdle();
+      // A jog typed in the console (writeln) is limited too.
+      const typed = sent('console jog');
+      s.writeln('$J=G91 G21 Y500 F3000');
+      await typed;
+      await s.waitIdle();
+    },
+  },
 };
 
 /* ------------------------------------------------------------------------------------------------
@@ -805,6 +848,7 @@ async function runScenario(name: string, sc: Scenario): Promise<void> {
       KINETIQ_JOBS_DIR: path.join(tmp, 'jobs'),
       KINETIQ_CONFIG_BACKUP_DIR: path.join(tmp, 'config-backups'),
       KINETIQ_LOG_LEVEL: process.env.KINETIQ_LOG_LEVEL || 'info',
+      KINETIQ_TRAVEL_LIMITS: sc.travelLimits ? 'on' : 'off',
     });
     await until(() => fs.readFileSync(path.join(tmp, 'server.log'), 'utf8').includes('Kinetiq ready') || (server!.exitCode !== null && 'exited'), 60000, 'the server').then((v) => {
       if (v === 'exited') throw new Error('the server exited during startup (see server.log)');

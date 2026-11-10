@@ -9,6 +9,9 @@
  * G17/G18/G19 planes with helical arcs, G20/G21, G90/G91, comments ( ) and ;, N/checksum words.
  * Not drawn (position tracking only where it is well defined): G28/G30 (unknown stored positions),
  * G53 (machine coordinates), G92 (offsets) — moves after them still draw from the programmed values.
+ *
+ * Each segment also carries the programmed feed rate (mm/min) and G4 dwells are listed, so the run
+ * time can be estimated from the same geometry (`estimate.ts`).
  */
 
 export interface Toolpath {
@@ -18,6 +21,10 @@ export interface Toolpath {
   lines: Uint32Array;
   /** 0 = rapid (G0), 1 = feed (G1/G2/G3) per segment. */
   kinds: Uint8Array;
+  /** Programmed feed (mm/min) of each feed segment; 0 for rapids and for feeds with no F yet. */
+  feeds: Float32Array;
+  /** G4 dwells: program line index and seconds. */
+  dwells: { line: number; seconds: number }[];
   segmentCount: number;
   /** Non-empty lines in the program (= Sender total for the same text). */
   lineCount: number;
@@ -65,6 +72,19 @@ class GrowableU32 {
   }
 }
 
+class GrowableF32Single {
+  data = new Float32Array(1 << 14);
+  length = 0;
+  push(v: number) {
+    if (this.length === this.data.length) {
+      const next = new Float32Array(this.data.length * 2);
+      next.set(this.data);
+      this.data = next;
+    }
+    this.data[this.length++] = v;
+  }
+}
+
 class GrowableU8 {
   data = new Uint8Array(1 << 14);
   length = 0;
@@ -100,7 +120,11 @@ export function parseToolpath(gcode: string): Toolpath {
   const positions = new GrowableF32();
   const lineIdx = new GrowableU32();
   const kinds = new GrowableU8();
+  const feedRates = new GrowableF32Single();
+  const dwells: { line: number; seconds: number }[] = [];
   const warnings: string[] = [];
+  let feed = 0; // modal F, mm/min (0 = not set yet)
+  let inverseTime = false; // G93: F is 1/minutes per block, not a rate
 
   // Modal state
   let motion: 0 | 1 | 2 | 3 | null = null;
@@ -127,6 +151,7 @@ export function parseToolpath(gcode: string): Toolpath {
     positions.push6(a[0], a[1], a[2], b[0], b[1], b[2]);
     lineIdx.push(line);
     kinds.push(kind);
+    feedRates.push(kind === 1 && !inverseTime ? feed : 0);
     for (let k = 0; k < 3; k++) {
       const lo = Math.min(a[k], b[k]);
       const hi = Math.max(a[k], b[k]);
@@ -176,7 +201,18 @@ export function parseToolpath(gcode: string): Toolpath {
         case 910: relative = true; break;
         case 901: arcAbsolute = true; break;
         case 911: arcAbsolute = false; break;
-        case 40: // G4 dwell: P is time, no axis words consumed for motion
+        case 40: // G4 dwell: P is time in seconds (GRBL), no axis words consumed for motion
+          if (words.P > 0) dwells.push({ line: index, seconds: words.P });
+          break;
+        case 930:
+          inverseTime = true;
+          if (!unsupportedWarned.has('G93')) {
+            unsupportedWarned.add('G93');
+            warnings.push('G93 (inverse time) feeds are not used for the time estimate');
+          }
+          break;
+        case 940:
+          inverseTime = false;
           break;
         case 100: case 280: case 300: case 920:
           nonModalMove = true;
@@ -196,6 +232,9 @@ export function parseToolpath(gcode: string): Toolpath {
         }
       }
     }
+
+    // F applies to this block's motion, in the units in force after this line's G20/G21.
+    if ('F' in words && words.F > 0) feed = words.F * (inches ? 25.4 : 1);
 
     const hasAxis = 'X' in words || 'Y' in words || 'Z' in words;
     const hasArcWords = 'I' in words || 'J' in words || 'K' in words || 'R' in words;
@@ -307,6 +346,8 @@ export function parseToolpath(gcode: string): Toolpath {
     positions: positions.data.slice(0, positions.length),
     lines: lineIdx.data.slice(0, segmentCount),
     kinds: kinds.data.slice(0, segmentCount),
+    feeds: feedRates.data.slice(0, segmentCount),
+    dwells,
     segmentCount,
     lineCount: index + 1,
     feedBounds: box(fmin, fmax),
@@ -314,4 +355,14 @@ export function parseToolpath(gcode: string): Toolpath {
     units: sawInch && sawMm ? 'mixed' : sawInch ? 'in' : 'mm',
     warnings,
   };
+}
+
+/**
+ * The last parsed toolpath, keyed by the exact G-code string. The visualisation and the time
+ * estimate both need the toolpath of the loaded program; this keeps it to one parse per load.
+ */
+let cached: { gcode: string; toolpath: Toolpath } | null = null;
+export function toolpathFor(gcode: string): Toolpath {
+  if (cached?.gcode !== gcode) cached = { gcode, toolpath: parseToolpath(gcode) };
+  return cached.toolpath;
 }

@@ -28,6 +28,12 @@ export function jogLine(axis: JogAxis, direction: 1 | -1, step: number, feed: nu
   return `$J=G91 ${unitWord} ${axis}${distance} F${trimNumber(feed)}`;
 }
 
+/** Diagonal jog: X and Y by `step` each in one move, e.g. `$J=G91 G21 X-10 Y10 F1000` (feed along the diagonal). */
+export function jogLineXY(xDirection: 1 | -1, yDirection: 1 | -1, step: number, feed: number, units: Units): string {
+  const unitWord = units === 'in' ? 'G20' : 'G21';
+  return `$J=G91 ${unitWord} X${trimNumber(xDirection * step)} Y${trimNumber(yDirection * step)} F${trimNumber(feed)}`;
+}
+
 function trimNumber(value: number): string {
   // Up to 4 decimals, no trailing zeros, no exponent notation.
   return Number(value.toFixed(4)).toString();

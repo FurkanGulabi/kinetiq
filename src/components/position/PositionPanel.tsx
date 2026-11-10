@@ -5,13 +5,13 @@
  *
  * Readout: work (primary) and machine (secondary) X/Y/Z from controller:state.
  * Per axis (AxisRow): Go to (absolute jog), Zero (G10 L20), Home ($H<axis>).
- * Jog: one `$J=` line per press through the CNCjs Feeder; centre button = jog cancel (0x85).
+ * Jog: one `$J=` line per press through the CNCjs Feeder (corners: X and Y together); centre button = jog cancel (0x85).
  * Go to zero: `$J=G90` to work X0 Y0 (+ Z0 when "Include Z"; Z is raised first when below zero).
  * Floating, draggable, collapsible (FloatingWidget); collapsed, the header shows work X/Y/Z.
  * Probe Z is its own widget (ProbeSection).
  * No optimistic state — the readout only changes when the controller reports a new position.
  */
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Crosshair, Square } from 'lucide-react';
+import { ArrowDown, ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUp, ArrowUpLeft, ArrowUpRight, Crosshair, Square } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { sendCommand, sendGcode } from '@/lib/cnc/client';
 import {
@@ -20,6 +20,7 @@ import {
   JOG_FEEDS,
   JOG_STEPS,
   jogLine,
+  jogLineXY,
   MAX_JOG_FEED,
   type JogAxis,
   type Units,
@@ -133,6 +134,42 @@ function JogButton({
   );
 }
 
+/** Corner of the XY pad: X and Y together by one step each. */
+function DiagonalJogButton({
+  x,
+  y,
+  icon,
+  disabled,
+  reason,
+  onJog,
+}: {
+  x: 1 | -1;
+  y: 1 | -1;
+  icon: React.ReactNode;
+  disabled: boolean;
+  reason?: string;
+  onJog: (x: 1 | -1, y: 1 | -1) => void;
+}) {
+  const sign = (d: 1 | -1) => (d > 0 ? '+' : '−');
+  return (
+    <button
+      type="button"
+      aria-label={`Jog X ${x > 0 ? 'positive' : 'negative'} and Y ${y > 0 ? 'positive' : 'negative'}`}
+      title={disabled ? reason : `X${sign(x)} Y${sign(y)} together`}
+      disabled={disabled}
+      onClick={() => onJog(x, y)}
+      className="pressable flex h-[52px] w-[52px] flex-col items-center justify-center gap-0.5 rounded-md border border-line bg-surface text-ink-2 hover-fine:border-ink-3 hover-fine:text-ink disabled:cursor-not-allowed disabled:text-ink-3 disabled:hover:border-line"
+    >
+      <span className="font-mono text-[10px] font-semibold leading-none">
+        X{sign(x)}Y{sign(y)}
+      </span>
+      <span className="text-ink-3" aria-hidden>
+        {icon}
+      </span>
+    </button>
+  );
+}
+
 function fmtRoom(room: number | null, units: Units): string {
   return room === null ? '—' : room.toFixed(units === 'in' ? 2 : 1);
 }
@@ -198,6 +235,17 @@ export function PositionPanel() {
   const onJog = (axis: JogAxis, direction: 1 | -1) => {
     if (pad(axis, direction).disabled) return;
     sendGcode(jogLine(axis, direction, step, feed, units));
+  };
+
+  /** Diagonal: off when either of its two directions is off (not homed, at a travel limit). */
+  const diag = (x: 1 | -1, y: 1 | -1) => {
+    const px = pad('X', x);
+    const py = pad('Y', y);
+    return { disabled: px.disabled || py.disabled, reason: px.disabled ? px.reason : py.reason };
+  };
+  const onDiagonal = (x: 1 | -1, y: 1 | -1) => {
+    if (diag(x, y).disabled) return;
+    sendGcode(jogLineXY(x, y, step, feed, units));
   };
 
   const feedValue = Number(feedText);
@@ -270,9 +318,9 @@ export function PositionPanel() {
       <h3 className="panel-label mb-3">Jog</h3>
       <div className="flex items-start justify-center gap-6">
         <div className="grid grid-cols-3 grid-rows-3 gap-1.5" role="group" aria-label="XY jog">
-          <span />
+          <DiagonalJogButton x={-1} y={1} icon={<ArrowUpLeft size={arrow} />} {...diag(-1, 1)} onJog={onDiagonal} />
           <JogButton axis="Y" direction={1} icon={<ArrowUp size={arrow} />} {...pad('Y', 1)} onJog={onJog} />
-          <span />
+          <DiagonalJogButton x={1} y={1} icon={<ArrowUpRight size={arrow} />} {...diag(1, 1)} onJog={onDiagonal} />
           <JogButton axis="X" direction={-1} icon={<ArrowLeft size={arrow} />} {...pad('X', -1)} onJog={onJog} />
           <button
             type="button"
@@ -285,9 +333,9 @@ export function PositionPanel() {
             <Square size={16} fill="currentColor" aria-hidden />
           </button>
           <JogButton axis="X" direction={1} icon={<ArrowRight size={arrow} />} {...pad('X', 1)} onJog={onJog} />
-          <span />
+          <DiagonalJogButton x={-1} y={-1} icon={<ArrowDownLeft size={arrow} />} {...diag(-1, -1)} onJog={onDiagonal} />
           <JogButton axis="Y" direction={-1} icon={<ArrowDown size={arrow} />} {...pad('Y', -1)} onJog={onJog} />
-          <span />
+          <DiagonalJogButton x={1} y={-1} icon={<ArrowDownRight size={arrow} />} {...diag(1, -1)} onJog={onDiagonal} />
         </div>
         <div className="grid grid-rows-3 gap-1.5" role="group" aria-label="Z jog">
           <JogButton axis="Z" direction={1} icon={<ArrowUp size={arrow} />} {...pad('Z', 1)} onJog={onJog} />

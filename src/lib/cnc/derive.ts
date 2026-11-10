@@ -709,11 +709,13 @@ export function programFitView(s: MachineState): ProgramFitView {
   if (!wco) return { blocks: 'Waiting for the work position', status: 'unknown', overflows: [], unchecked: [] };
 
   const wcs = s.controller.state?.parserstate?.modal?.wcs || 'G54';
-  const key = `${wcs}|${limited.map((a) => wco[a].toFixed(3)).join(',')}`;
+  const tp = toolpathFor(gcode);
+  // A program with relative moves from its start is checked from where the machine is now.
+  const start = tp.startBounds ? machinePositionMm(s) : null;
+  const key = `${wcs}|${limited.map((a) => wco[a].toFixed(3)).join(',')}|${start ? limited.map((a) => start[a].toFixed(3)).join(',') : ''}`;
   if (fitCache && fitCache.gcode === gcode && fitCache.key === key) return fitCache.view;
 
-  const tp = toolpathFor(gcode);
-  const fit = checkFit({ ...tp, bounds: tp.fitBounds }, envelope, wco, wcs);
+  const fit = checkFit({ ...tp, bounds: tp.fitBounds }, envelope, wco, wcs, start ?? undefined);
   const view: ProgramFitView = {
     blocks: fit.fits ? null : `Does not fit in the travel limits: ${fit.overflows.join(', ')}. Move the work zero or the job.`,
     status: fit.fits ? 'fits' : 'overflow',

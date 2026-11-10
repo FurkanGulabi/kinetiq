@@ -244,6 +244,8 @@ export interface ProgramExtent {
   bounds: { min: [number, number, number]; max: [number, number, number] } | null;
   /** Bounds of `G53` targets, machine coordinates (mm), per axis; NaN where no G53 move names the axis. */
   machineBounds: { min: [number, number, number]; max: [number, number, number] };
+  /** Offsets from the job's start position reached by relative (G91) moves (mm, NaN per axis where none); optional. */
+  startBounds?: { min: [number, number, number]; max: [number, number, number] } | null;
   /** Things in the program the bounds cannot account for (e.g. "G92 changes the work offset"). */
   unchecked: string[];
   /** Work coordinate systems the program selects (`G54`…`G59`). */
@@ -261,10 +263,18 @@ export interface FitResult {
 
 /**
  * Compares a program's extent with the envelope, given the current work offset (machine − work, mm)
- * and the active coordinate system. Only limited axes are checked.
+ * and the active coordinate system. Only limited axes are checked. `startPos` (machine, mm) is where
+ * the job will start, for the program's relative moves; without it they are listed as unchecked.
  */
-export function checkFit(extent: ProgramExtent, envelope: Envelope, wco: Record<AxisKey, number>, activeWcs: string): FitResult {
+export function checkFit(
+  extent: ProgramExtent,
+  envelope: Envelope,
+  wco: Record<AxisKey, number>,
+  activeWcs: string,
+  startPos?: Record<AxisKey, number>,
+): FitResult {
   const overflows: string[] = [];
+  let relativeUnchecked = false;
   const over = (a: AxisKey, lo: number, hi: number, what: string) => {
     const range = envelope[a];
     if (!range) return;
@@ -281,8 +291,14 @@ export function checkFit(extent: ProgramExtent, envelope: Envelope, wco: Record<
     const lo = extent.machineBounds.min[k];
     const hi = extent.machineBounds.max[k];
     if (Number.isFinite(lo) && Number.isFinite(hi)) over(a, lo, hi, ' (G53 move)');
+    const sb = extent.startBounds;
+    if (sb && envelope[a] && Number.isFinite(sb.min[k]) && Number.isFinite(sb.max[k])) {
+      if (startPos && Number.isFinite(startPos[a])) over(a, sb.min[k] + startPos[a], sb.max[k] + startPos[a], ' (relative move from the current position)');
+      else relativeUnchecked = true;
+    }
   });
   const unchecked = [...extent.unchecked];
+  if (relativeUnchecked) unchecked.push('relative moves (G91) from wherever the machine is at the start');
   const otherWcs = extent.wcsUsed.filter((w) => w !== activeWcs);
   if (otherWcs.length) unchecked.push(`the program selects ${otherWcs.join(', ')} (checked against the active ${activeWcs})`);
   return { fits: overflows.length === 0, overflows, unchecked };

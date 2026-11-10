@@ -46,6 +46,12 @@ export interface Toolpath {
    * wherever the machine is, e.g. X/Y during `G0 Z5` before the first XY move or after `G53` moves.
    */
   fitBounds: { min: [number, number, number]; max: [number, number, number] } | null;
+  /**
+   * Bounds of positions reached only by relative moves (G91) from where the machine is when the
+   * job starts: offsets from that start position (mm; NaN on an axis with none). E.g. a hole cut
+   * with G91 around the current position.
+   */
+  startBounds: { min: [number, number, number]; max: [number, number, number] } | null;
   unchecked: string[];
   wcsUsed: string[];
 }
@@ -161,13 +167,36 @@ export function parseToolpath(gcode: string): Toolpath {
   const fmax = [-Infinity, -Infinity, -Infinity];
   const kmin = [Infinity, Infinity, Infinity];
   const kmax = [-Infinity, -Infinity, -Infinity];
+  const smin = [Infinity, Infinity, Infinity];
+  const smax = [-Infinity, -Infinity, -Infinity];
+  /**
+   * What a known axis position is measured from: 'abs' = work coordinates, 'start' = offset from
+   * where the machine was when the job started (relative moves before any absolute one), 'none' =
+   * not usable for the fit check (unknown, or relative after G53/G92/G28 lost the position).
+   */
+  type Anchor = 'abs' | 'start' | 'none';
+  const anchor: Anchor[] = ['none', 'none', 'none'];
+  const everKnown = [false, false, false];
   const mmin: [number, number, number] = [NaN, NaN, NaN];
   const mmax: [number, number, number] = [NaN, NaN, NaN];
   const unchecked = new Set<string>();
   const wcsUsed = new Set<string>();
 
   let index = -1; // Sender line index
-  const addSegment = (a: number[], b: number[], kind: 0 | 1, line: number) => {
+  const addPoint = (p: number[], an: Anchor[]) => {
+    for (let k = 0; k < 3; k++) {
+      if (an[k] === 'abs') {
+        if (p[k] < kmin[k]) kmin[k] = p[k];
+        if (p[k] > kmax[k]) kmax[k] = p[k];
+      } else if (an[k] === 'start') {
+        if (p[k] < smin[k]) smin[k] = p[k];
+        if (p[k] > smax[k]) smax[k] = p[k];
+      }
+    }
+  };
+  /** Anchors of a segment's start and end (the end differs when the move sets an axis absolutely). */
+  let segAnchor: { a: Anchor[]; b: Anchor[] } = { a: anchor.slice(), b: anchor.slice() };
+  const addSegment = (a: number[], b: number[], kind: 0 | 1, line: number, first = true) => {
     positions.push6(a[0], a[1], a[2], b[0], b[1], b[2]);
     lineIdx.push(line);
     kinds.push(kind);
@@ -177,16 +206,14 @@ export function parseToolpath(gcode: string): Toolpath {
       const hi = Math.max(a[k], b[k]);
       if (lo < min[k]) min[k] = lo;
       if (hi > max[k]) max[k] = hi;
-      // Unknown axes are not drawn while they move, so an unknown axis here stands still at a made-up 0.
-      if (known[k]) {
-        if (lo < kmin[k]) kmin[k] = lo;
-        if (hi > kmax[k]) kmax[k] = hi;
-      }
       if (kind === 1) {
         if (lo < fmin[k]) fmin[k] = lo;
         if (hi > fmax[k]) fmax[k] = hi;
       }
     }
+    // Unknown axes are not drawn while they move, so an axis anchored 'none' stands still at a made-up 0.
+    addPoint(a, first ? segAnchor.a : segAnchor.b);
+    addPoint(b, segAnchor.b);
   };
 
   const rawLines = gcode.split('\n');
@@ -271,6 +298,7 @@ export function parseToolpath(gcode: string): Toolpath {
     if (nonModalMove) {
       // G28/G30 go to stored positions; G92/G10 change offsets: the work position is no longer known.
       known[0] = known[1] = known[2] = false;
+      anchor[0] = anchor[1] = anchor[2] = 'none';
       // For the travel-limit check: only X/Y matter (Z is not limited). G28/G30 with no axis
       // words move every axis.
       const stored = nonModalWord === 'G28' || nonModalWord === 'G30';
@@ -287,6 +315,7 @@ export function parseToolpath(gcode: string): Toolpath {
       for (let k = 0; k < 3; k++) {
         if (!(axes[k] in words)) continue;
         known[k] = false;
+        anchor[k] = 'none';
         const t = words[axes[k]] * machineScale;
         mmin[k] = Number.isNaN(mmin[k]) ? t : Math.min(mmin[k], t);
         mmax[k] = Number.isNaN(mmax[k]) ? t : Math.max(mmax[k], t);
@@ -297,9 +326,16 @@ export function parseToolpath(gcode: string): Toolpath {
     if (relative) {
       for (let k = 0; k < 3; k++) {
         if (known[k]) continue;
-        if (k < 2 && axes[k] in words) unchecked.add('relative moves (G91) from wherever the machine is at the start');
+        if (everKnown[k]) {
+          // Relative after G53/G92/G28: the start of these moves is not the job start.
+          anchor[k] = 'none';
+          if (k < 2 && axes[k] in words) unchecked.add('relative moves (G91) after a move to machine coordinates or an offset change');
+        } else {
+          anchor[k] = 'start';
+        }
         pos[k] = 0;
         known[k] = true;
+        everKnown[k] = true;
       }
     }
 
@@ -310,6 +346,9 @@ export function parseToolpath(gcode: string): Toolpath {
       const v = words[axes[k]];
       if (v !== undefined) target[k] = relative ? pos[k] + v * scale : v * scale;
     }
+    const anchorBefore = anchor.slice();
+    if (!relative) for (let k = 0; k < 3; k++) if (axes[k] in words) anchor[k] = 'abs';
+    segAnchor = { a: anchorBefore, b: anchor.slice() };
     // Skip a segment only when an axis that moves starts from an unknown position (the first
     // positioning move per axis). An axis that never moves (e.g. Z in a 2D laser job) is drawn at 0.
     const drawable =
@@ -332,7 +371,7 @@ export function parseToolpath(gcode: string): Toolpath {
         const d2 = dx * dx + dy * dy;
         if (d2 === 0) {
           warnings.push(`Line ${index + 1}: R-form arc with identical start and end skipped`);
-          for (let k = 0; k < 3; k++) { pos[k] = target[k]; if (axes[k] in words) known[k] = true; }
+          for (let k = 0; k < 3; k++) { pos[k] = target[k]; if (axes[k] in words) { known[k] = true; everKnown[k] = true; } }
           continue;
         }
         let h2 = radius * radius - d2 / 4;
@@ -373,13 +412,16 @@ export function parseToolpath(gcode: string): Toolpath {
           p[v] = cv + radius * Math.sin(a);
           p[w] = sw + (ew - sw) * t;
         }
-        addSegment(prev, p, 1, index);
+        addSegment(prev, p, 1, index, s === 1);
         prev = p;
       }
     }
 
     for (let k = 0; k < 3; k++) {
-      if (axes[k] in words) known[k] = true;
+      if (axes[k] in words) {
+        known[k] = true;
+        everKnown[k] = true;
+      }
       pos[k] = target[k];
     }
   }
@@ -403,15 +445,17 @@ export function parseToolpath(gcode: string): Toolpath {
     units: sawInch && sawMm ? 'mixed' : sawInch ? 'in' : 'mm',
     warnings,
     machineBounds: { min: mmin, max: mmax },
-    fitBounds: segmentCount
-      ? {
-          min: kmin.map((v) => (Number.isFinite(v) ? v : NaN)) as [number, number, number],
-          max: kmax.map((v) => (Number.isFinite(v) ? v : NaN)) as [number, number, number],
-        }
-      : null,
+    fitBounds: segmentCount ? perAxisBox(kmin, kmax) : null,
+    startBounds: Number.isFinite(smin[0]) || Number.isFinite(smin[1]) || Number.isFinite(smin[2]) ? perAxisBox(smin, smax) : null,
     unchecked: [...unchecked],
     wcsUsed: [...wcsUsed],
   };
+}
+
+/** Min/max per axis, NaN where nothing was recorded. */
+function perAxisBox(lo: number[], hi: number[]): { min: [number, number, number]; max: [number, number, number] } {
+  const f = (v: number) => (Number.isFinite(v) ? v : NaN);
+  return { min: [f(lo[0]), f(lo[1]), f(lo[2])], max: [f(hi[0]), f(hi[1]), f(hi[2])] };
 }
 
 /**

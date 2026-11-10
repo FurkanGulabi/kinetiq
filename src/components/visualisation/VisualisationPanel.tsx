@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { reportUnits } from '@/lib/cnc/derive';
 import { getState, subscribe, type MachineState } from '@/lib/cnc/store';
-import { parseToolpath, type Toolpath } from '@/lib/gcode/toolpath';
+import { toolpathFor, type Toolpath } from '@/lib/gcode/toolpath';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { EDGE, getWidgetRects, subscribeWidgetRects, TOOLBAR_SPACE, TOP_BAR } from '@/lib/ui/layout';
 import { MachineScene, type ScenePosition, type ViewPreset } from './MachineScene';
@@ -184,7 +184,7 @@ export default function VisualisationPanel() {
         return;
       }
       parseTimer = setTimeout(() => {
-        const toolpath = parseToolpath(gcode);
+        const toolpath = toolpathFor(gcode);
         scene.setToolpath(toolpath);
         const fb = toolpath.feedBounds;
         setProgram({

@@ -216,7 +216,7 @@ The same rule is in the headers of `TaskRunner.ts`, `EventTrigger.ts` and `confi
 | U4 | Socket.IO 2.2 and Engine.IO 3 are old and carry published advisories (for example permissive default CORS before socket.io 2.4) | Local-only deployment limits exposure. The JWT handshake still applies. | Bind to loopback and add the Host-header check. Upgrading belongs in the fork, not in Kinetiq. |
 | U5 | `CNCJS-fork` must be built before Kinetiq can run | **Resolved (2026-11-08):** the backend is embedded in `src/server/` (D2 revised; first as JavaScript in `src/server/cnc`, now TypeScript); `npm install` is the only setup step. | — |
 | U6 | `ignoreErrors` key mismatch (`state.controller.exception.ignoreErrors` vs the default `controller.exception.ignoreErrors`) | None (the safe default holds) | Leave as is. Kinetiq never sets either key. |
-| U7 | `remainingTime` is a line-count extrapolation | Inaccurate on uneven programs | Shown as "≈ estimate" (see `API_REFERENCE.md` §7). A better estimator is a future feature. |
+| U7 | `remainingTime` is a line-count extrapolation | Inaccurate on uneven programs | **Resolved (2026-11-10):** the Job widget computes its own estimate from the toolpath, feeds and `$110`–`$122`, calibrated against the run (`API_REFERENCE.md` §7.3). `remainingTime` is only the fallback. |
 
 ---
 

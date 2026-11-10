@@ -9,6 +9,7 @@ import { AlertTriangle, FileCode2, FolderOpen, Info, Loader2, Pause, Play, Squar
 import { useEffect, useRef, useState } from 'react';
 import { clearStopFailure, sendCommand, stopJob } from '@/lib/cnc/client';
 import { jobStatus, jobView, levelingDrift, runErrors, type JobStatus } from '@/lib/cnc/derive';
+import { useJobEstimate } from '@/lib/cnc/jobEstimate';
 import { getState, subscribe, useMachine } from '@/lib/cnc/store';
 import {
   formatBytes,
@@ -56,7 +57,15 @@ function duration(ms: number | null): string {
 function estimate(ms: number | null, paused: boolean): string {
   if (ms === null) return '—';
   const s = Math.round(ms / 1000);
-  const text = s < 60 ? `${s} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
+  // Under 10 min, seconds matter (the estimate is good to a few seconds); above, minutes are enough.
+  const text =
+    s < 60
+      ? `${s} s`
+      : s < 600
+        ? `${Math.floor(s / 60)} min ${pad(s % 60)} s`
+        : s < 3600
+          ? `${Math.round(s / 60)} min`
+          : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
   return `≈ ${text}${paused ? ' (paused)' : ''}`;
 }
 
@@ -121,6 +130,7 @@ export function JobPanel() {
   const clockRunning = machine.workflow !== 'idle';
   const now = useNow(clockRunning);
   const view = jobView(machine, now);
+  const est = useJobEstimate();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -171,6 +181,18 @@ export function JobPanel() {
   const meterTone =
     view.status === 'completed' ? 'ok' : view.status === 'error' ? 'crit' : view.status === 'paused' ? 'warn' : view.status === 'cancelled' ? 'neutral' : 'accent';
   const paused = view.status === 'paused';
+  // Remaining: the toolpath estimate (jobEstimate.ts), else the backend's line-count extrapolation.
+  // Before a start it shows the estimated run time of the loaded program.
+  const jobActive = machine.workflow !== 'idle';
+  const remainingMs = jobActive ? (est.remainingMs ?? view.remainingMs) : est.totalMs;
+  const remainingText = estimate(remainingMs, paused);
+  const remainingHint = !jobActive
+    ? 'Estimated run time from the toolpath, feeds and the machine’s max rates and accelerations ($110–$122). Pauses and tool changes not included.'
+    : est.remainingMs !== null
+      ? est.calibrated
+        ? 'Estimate from the toolpath ahead of the tool, corrected by how fast this run has actually gone. Pauses and tool changes not included.'
+        : 'Estimate from the toolpath ahead of the tool, feeds and machine limits. It is corrected once the job has run for a few seconds.'
+      : 'Estimate: assumes every line takes the same time. Appears after the first second.';
 
   return (
     <FloatingWidget
@@ -289,8 +311,8 @@ export function JobPanel() {
             />
             <Stat
               label="Remaining"
-              value={estimate(view.remainingMs, paused)}
-              hint="Estimate: assumes every line takes the same time. Appears after the first second."
+              value={remainingText}
+              hint={remainingHint}
             />
             <Stat
               label="Finished"

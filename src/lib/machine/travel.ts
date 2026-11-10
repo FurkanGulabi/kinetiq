@@ -13,10 +13,45 @@
 /**
  * How far each axis may travel from the home switch (mm).
  *
- * PROVISIONAL: the physical travel is about 400 (X) and 410 (Y), not measured exactly yet. Until
- * it is, both axes are held to 200. Put the measured travel here; SAFETY_MARGIN_MM is kept on top.
+ * Default only: the physical travel is about 400 (X) and 410 (Y). "Measure X / Y" in the Position
+ * widget measures it on the machine and saves it in the config (`kinetiq.travel`), which overrides
+ * these values. SAFETY_MARGIN_MM is kept on top.
  */
 export const TRAVEL_LIMIT_MM = { x: 200, y: 200 } as const;
+
+/** Travel of the limited axes from the home switch (mm): the defaults above, or measured values saved in the config. */
+export interface TravelMm {
+  x: number;
+  y: number;
+}
+
+/** A saved travel outside this range is ignored (mm). */
+export const TRAVEL_RANGE_MM = { min: 50, max: 1000 } as const;
+
+/*
+ * Measuring the travel ("reverse homing"): after homing, the axis moves slowly to the far end until
+ * the limit switch there trips the hard limit (ALARM:1). The machine position in the first status
+ * report after the alarm is the travel. Both ends share one switch input, so FluidNC cannot home to
+ * the far end itself.
+ */
+/** Furthest the measuring move goes (mm). The switch is expected well before this. */
+export const MEASURE_SEARCH_MM = 600;
+/** Feed of the measuring move (mm/min): slow, so the hard-limit stop is short and the reading exact. */
+export const MEASURE_FEED_MM_PER_MIN = 200;
+/** How far "Back off" moves the axis off the far switch, toward home (mm). */
+export const MEASURE_BACKOFF_MM = 5;
+
+export type LimitedAxis = 'x' | 'y';
+
+export interface TravelMeasure {
+  axis: LimitedAxis;
+  /** moving: on the way to the far switch · tripped: switch hit, waiting for the position · done · failed */
+  phase: 'moving' | 'tripped' | 'done' | 'failed';
+  /** Measured travel (mm), when done. */
+  travelMm?: number;
+  /** Why it failed. */
+  message?: string;
+}
 
 /** Kept free before the far end of each axis (mm). */
 export const SAFETY_MARGIN_MM = 2;
@@ -49,6 +84,13 @@ export type Homed = Record<AxisKey, boolean>;
 /** What the backend tells the UI (`machine:limits`). `envelope` null = travel limits are off. */
 export interface MachineLimits {
   envelope: Envelope | null;
+  /** Travel in use (mm) and whether each axis's value was measured (saved) rather than the default. */
+  travel: TravelMm;
+  measured: Record<LimitedAxis, boolean>;
+  /** The travel measurement in progress or just finished; null when there is none. */
+  measure: TravelMeasure | null;
+  /** Axis that can be backed off its far switch (after a measurement tripped it); null otherwise. */
+  backoff: LimitedAxis | null;
   /** Axes whose machine position is known: homed since the controller started, no position-losing alarm since. */
   homed: Homed;
 }
@@ -58,13 +100,36 @@ function axisRange(travel: number, homeEnd: 'min' | 'max'): AxisRange {
   return homeEnd === 'max' ? { min: -far, max: -HOME_CLEARANCE_MM } : { min: HOME_CLEARANCE_MM, max: far };
 }
 
-/** The envelope from the constants above. */
-export function machineEnvelope(): Envelope {
+/** The envelope for a travel (default: the constants above). */
+export function machineEnvelope(travel: TravelMm = TRAVEL_LIMIT_MM): Envelope {
   return {
-    x: axisRange(TRAVEL_LIMIT_MM.x, HOME_END.x),
-    y: axisRange(TRAVEL_LIMIT_MM.y, HOME_END.y),
+    x: axisRange(travel.x, HOME_END.x),
+    y: axisRange(travel.y, HOME_END.y),
     z: null,
   };
+}
+
+/** True for a usable travel value (mm). */
+export function validTravel(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= TRAVEL_RANGE_MM.min && v <= TRAVEL_RANGE_MM.max;
+}
+
+/** The measuring move: machine coordinates, toward the far end of the axis. */
+export function measureJogLine(axis: LimitedAxis): string {
+  const far = HOME_END[axis] === 'max' ? -MEASURE_SEARCH_MM : MEASURE_SEARCH_MM;
+  return `$J=G53 G90 G21 ${axis.toUpperCase()}${far} F${MEASURE_FEED_MM_PER_MIN}`;
+}
+
+/** The back-off move: relative, toward home, off the far switch. */
+export function backoffJogLine(axis: LimitedAxis): string {
+  const toward = HOME_END[axis] === 'max' ? MEASURE_BACKOFF_MM : -MEASURE_BACKOFF_MM;
+  return `$J=G91 G21 ${axis.toUpperCase()}${toward} F${MEASURE_FEED_MM_PER_MIN}`;
+}
+
+/** Distance from home (mm) of a machine position on an axis, rounded down to 0.1 mm. */
+export function travelFromPosition(axis: LimitedAxis, machineMm: number): number {
+  const d = HOME_END[axis] === 'max' ? -machineMm : machineMm;
+  return Math.floor(d * 10 + 1e-6) / 10;
 }
 
 /** Axes homed by a homing line: `$H` homes every limited axis, `$HX` / `$HXY` the named ones. null = not a homing line. */

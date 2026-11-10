@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/Button';
 import { FloatingWidget } from '@/components/ui/FloatingWidget';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { AxisRow } from './AxisRow';
+import { TravelSection } from './TravelSection';
 
 const PREFS_KEY = 'kinetiq.jog';
 const ZERO_Z_KEY = 'kinetiq.goZeroIncludeZ';
@@ -305,6 +306,8 @@ export function PositionPanel() {
                 .join(' · ') + ` ${units} to the travel limits`}
         </p>
       ) : null}
+
+      <TravelSection machine={machine} />
 
       {/* Go to work zero */}
       <div className="mt-4 flex items-center justify-center gap-4">

@@ -131,4 +131,9 @@ export const createCommandTable = (controller: GrblController): CommandTable => 
       feeder.next();
     }
   },
+  // Kinetiq: travel measurement ("reverse homing"), TravelGuard
+  'travel:measure': (axis) => controller.travel.startMeasure(axis),
+  'travel:apply': () => controller.travel.applyMeasure(),
+  'travel:dismiss': () => controller.travel.dismissMeasure(),
+  'travel:backoff': () => controller.travel.backoff(),
 });

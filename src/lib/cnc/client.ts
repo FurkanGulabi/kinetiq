@@ -331,6 +331,18 @@ export type MachineCommand =
   | 'gcode:unload' // workflow stop + Sender.unload()
   | 'jogCancel'; // 0x85 real-time jog cancel
 
+/** Kinetiq travel measurement ("reverse homing", TravelGuard): measure an axis, then apply/dismiss, back off. */
+export function sendTravelCommand(cmd: 'travel:measure', axis: 'x' | 'y'): void;
+export function sendTravelCommand(cmd: 'travel:apply' | 'travel:dismiss' | 'travel:backoff'): void;
+export function sendTravelCommand(cmd: 'travel:measure' | 'travel:apply' | 'travel:dismiss' | 'travel:backoff', axis?: 'x' | 'y'): void {
+  const { port, phase } = getState().connection;
+  if (!socket || !port || phase !== 'open') {
+    return;
+  }
+  if (cmd === 'travel:measure') socket.emit('command', port, cmd, axis!);
+  else socket.emit('command', port, cmd);
+}
+
 export function sendCommand(cmd: MachineCommand): void {
   const { port, phase } = getState().connection;
   if (!socket || !port || phase !== 'open') {

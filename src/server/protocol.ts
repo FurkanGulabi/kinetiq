@@ -423,6 +423,14 @@ export interface ControllerCommands {
    * socket that omits it): nothing is queued.
    */
   gcode: [commands: string | string[] | undefined, context?: WriteContext];
+  /** Kinetiq: slow jog of a homed axis to its far limit switch, to measure the travel (TravelGuard). */
+  'travel:measure': [axis: 'x' | 'y'];
+  /** Kinetiq: save the measured travel and use it for the envelope. */
+  'travel:apply': [];
+  /** Kinetiq: forget a finished or failed measurement. */
+  'travel:dismiss': [];
+  /** Kinetiq: move the measured axis a few mm off its far switch, toward home. */
+  'travel:backoff': [];
 }
 
 export type ControllerCommandName = keyof ControllerCommands;
@@ -444,6 +452,10 @@ export const CONTROLLER_COMMANDS = [
   'feedOverride',
   'spindleOverride',
   'gcode',
+  'travel:measure',
+  'travel:apply',
+  'travel:dismiss',
+  'travel:backoff',
 ] as const satisfies readonly ControllerCommandName[];
 
 // Compile-time check that both lists name every key (`satisfies` above rules out extra names).

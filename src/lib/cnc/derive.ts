@@ -712,7 +712,8 @@ export function programFitView(s: MachineState): ProgramFitView {
   const key = `${wcs}|${limited.map((a) => wco[a].toFixed(3)).join(',')}`;
   if (fitCache && fitCache.gcode === gcode && fitCache.key === key) return fitCache.view;
 
-  const fit = checkFit(toolpathFor(gcode), envelope, wco, wcs);
+  const tp = toolpathFor(gcode);
+  const fit = checkFit({ ...tp, bounds: tp.fitBounds }, envelope, wco, wcs);
   const view: ProgramFitView = {
     blocks: fit.fits ? null : `Does not fit in the travel limits: ${fit.overflows.join(', ')}. Move the work zero or the job.`,
     status: fit.fits ? 'fits' : 'overflow',

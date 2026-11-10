@@ -40,6 +40,12 @@ export interface Toolpath {
    * work coordinate systems the program selects.
    */
   machineBounds: { min: [number, number, number]; max: [number, number, number] };
+  /**
+   * Like `bounds`, but only from positions the program has set (work coordinates, mm; NaN on an
+   * axis it never sets). An axis that has not been programmed yet is drawn at 0 but is really
+   * wherever the machine is, e.g. X/Y during `G0 Z5` before the first XY move or after `G53` moves.
+   */
+  fitBounds: { min: [number, number, number]; max: [number, number, number] } | null;
   unchecked: string[];
   wcsUsed: string[];
 }
@@ -153,6 +159,8 @@ export function parseToolpath(gcode: string): Toolpath {
   const max = [-Infinity, -Infinity, -Infinity];
   const fmin = [Infinity, Infinity, Infinity];
   const fmax = [-Infinity, -Infinity, -Infinity];
+  const kmin = [Infinity, Infinity, Infinity];
+  const kmax = [-Infinity, -Infinity, -Infinity];
   const mmin: [number, number, number] = [NaN, NaN, NaN];
   const mmax: [number, number, number] = [NaN, NaN, NaN];
   const unchecked = new Set<string>();
@@ -169,6 +177,11 @@ export function parseToolpath(gcode: string): Toolpath {
       const hi = Math.max(a[k], b[k]);
       if (lo < min[k]) min[k] = lo;
       if (hi > max[k]) max[k] = hi;
+      // Unknown axes are not drawn while they move, so an unknown axis here stands still at a made-up 0.
+      if (known[k]) {
+        if (lo < kmin[k]) kmin[k] = lo;
+        if (hi > kmax[k]) kmax[k] = hi;
+      }
       if (kind === 1) {
         if (lo < fmin[k]) fmin[k] = lo;
         if (hi > fmax[k]) fmax[k] = hi;
@@ -390,6 +403,12 @@ export function parseToolpath(gcode: string): Toolpath {
     units: sawInch && sawMm ? 'mixed' : sawInch ? 'in' : 'mm',
     warnings,
     machineBounds: { min: mmin, max: mmax },
+    fitBounds: segmentCount
+      ? {
+          min: kmin.map((v) => (Number.isFinite(v) ? v : NaN)) as [number, number, number],
+          max: kmax.map((v) => (Number.isFinite(v) ? v : NaN)) as [number, number, number],
+        }
+      : null,
     unchecked: [...unchecked],
     wcsUsed: [...wcsUsed],
   };

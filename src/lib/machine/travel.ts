@@ -240,7 +240,7 @@ export function limitJog(line: string, ctx: JogContext): JogDecision | null {
  * ---------------------------------------------------------------------------------------------- */
 
 export interface ProgramExtent {
-  /** Bounds of every drawn move, work coordinates (mm); null when the program has no moves. */
+  /** Bounds of the moves, work coordinates (mm); null when the program has no moves, NaN on an axis that cannot be checked. */
   bounds: { min: [number, number, number]; max: [number, number, number] } | null;
   /** Bounds of `G53` targets, machine coordinates (mm), per axis; NaN where no G53 move names the axis. */
   machineBounds: { min: [number, number, number]; max: [number, number, number] };
@@ -275,7 +275,9 @@ export function checkFit(extent: ProgramExtent, envelope: Envelope, wco: Record<
     if (hi > range.max + eps) overflows.push(`${name}+ by ${fmt(hi - range.max)} mm${what}`);
   };
   AXIS_KEYS.forEach((a, k) => {
-    if (extent.bounds) over(a, extent.bounds.min[k] + wco[a], extent.bounds.max[k] + wco[a], '');
+    if (extent.bounds && Number.isFinite(extent.bounds.min[k]) && Number.isFinite(extent.bounds.max[k])) {
+      over(a, extent.bounds.min[k] + wco[a], extent.bounds.max[k] + wco[a], '');
+    }
     const lo = extent.machineBounds.min[k];
     const hi = extent.machineBounds.max[k];
     if (Number.isFinite(lo) && Number.isFinite(hi)) over(a, lo, hi, ' (G53 move)');

@@ -8,7 +8,7 @@
 import { Crosshair, Eraser, Maximize2, Route, Spline } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { reportUnits } from '@/lib/cnc/derive';
+import { programFitView, reportUnits } from '@/lib/cnc/derive';
 import { getState, subscribe, type MachineState } from '@/lib/cnc/store';
 import { toolpathFor, type Toolpath } from '@/lib/gcode/toolpath';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -209,10 +209,25 @@ export default function VisualisationPanel() {
       scene.setProgramProgress(s.program && s.sender && s.workflow !== 'idle' ? s.sender.received : null);
     };
 
+    // Travel limits: drawn once X and Y are homed (before that, machine coordinates mean nothing),
+    // red while the loaded program leaves them.
+    let lastLimits = '';
+    const updateLimits = () => {
+      const st = getState();
+      const env = st.limits?.envelope;
+      const shown = env?.x && env.y && st.limits?.homed.x && st.limits.homed.y ? { xMin: env.x.min, xMax: env.x.max, yMin: env.y.min, yMax: env.y.max } : null;
+      const exceeded = shown !== null && programFitView(st).status === 'overflow';
+      const key = shown ? `${shown.xMin},${shown.xMax},${shown.yMin},${shown.yMax},${exceeded}` : '';
+      if (key === lastLimits) return;
+      lastLimits = key;
+      scene.setTravelLimits(shown, exceeded);
+    };
+
     const onStore = () => {
       update();
       updateProgram();
       updateProgress();
+      updateLimits();
     };
     onStore();
     const unsubscribe = subscribe(onStore);

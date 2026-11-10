@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { loadProgram } from '@/lib/cnc/client';
-import { jobView, levelingView, workOffset } from '@/lib/cnc/derive';
+import { jobView, levelingView, workAreaFit, workOffset } from '@/lib/cnc/derive';
 import { useMachine } from '@/lib/cnc/store';
 import { parseToolpath } from '@/lib/gcode/toolpath';
 import { compensate, type CompensationResult } from '@/lib/leveling/compensate';
@@ -179,8 +179,9 @@ export default function LevelingWorkspace() {
   const active = machine.controller.state?.status.activeState ?? '';
   const job = jobView(machine, Date.now());
 
-  const canStart = view.canProbe.enabled && !settingsError;
-  const startReason = !view.canProbe.enabled ? view.canProbe.reason : settingsError ?? undefined;
+  const travelError = settingsError ? null : workAreaFit(machine, s);
+  const canStart = view.canProbe.enabled && !settingsError && !travelError;
+  const startReason = !view.canProbe.enabled ? view.canProbe.reason : settingsError ?? travelError ?? undefined;
   const estimate = settingsError ? null : estimateSeconds(s, rapid);
   const spacingX = s.nx > 1 ? (s.xMax - s.xMin) / (s.nx - 1) : NaN;
   const spacingY = s.ny > 1 ? (s.yMax - s.yMin) / (s.ny - 1) : NaN;

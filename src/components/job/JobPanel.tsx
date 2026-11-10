@@ -8,7 +8,7 @@
 import { AlertTriangle, FileCode2, FolderOpen, Info, Loader2, Pause, Play, Square, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { clearStopFailure, sendCommand, stopJob } from '@/lib/cnc/client';
-import { jobStatus, jobView, levelingDrift, runErrors, type JobStatus } from '@/lib/cnc/derive';
+import { jobStatus, jobView, levelingDrift, programFitView, runErrors, type JobStatus } from '@/lib/cnc/derive';
 import { useJobEstimate } from '@/lib/cnc/jobEstimate';
 import { getState, subscribe, useMachine } from '@/lib/cnc/store';
 import {
@@ -178,6 +178,7 @@ export function JobPanel() {
   const record = view.program?.jobId ? library.jobs.find((j) => j.id === view.program?.jobId) : undefined;
   const leveled = machine.program?.leveling ?? null;
   const leveledDrift = leveled ? levelingDrift(machine, leveled) : null;
+  const fit = programFitView(machine);
   const meterTone =
     view.status === 'completed' ? 'ok' : view.status === 'error' ? 'crit' : view.status === 'paused' ? 'warn' : view.status === 'cancelled' ? 'neutral' : 'accent';
   const paused = view.status === 'paused';
@@ -238,6 +239,17 @@ export function JobPanel() {
                     {' · '}
                     {leveledDrift ? 'Leveled — map no longer lines up' : 'Leveled'}
                   </span>
+                ) : null}
+                {fit.status === 'overflow' ? (
+                  <span className="text-crit" title={fit.blocks ?? undefined}>
+                    {' · '}Outside travel limits: {fit.overflows.join(', ')}
+                  </span>
+                ) : fit.status === 'fits' && fit.unchecked.length ? (
+                  <span className="text-warn" title={`Not checked against the travel limits: ${fit.unchecked.join('; ')}`}>
+                    {' · '}Fits, partly unchecked
+                  </span>
+                ) : fit.status === 'fits' ? (
+                  <span title="Every move stays inside the travel limits with the current work zero">{' · '}Fits the travel limits</span>
                 ) : null}
               </div>
             </div>

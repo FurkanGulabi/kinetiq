@@ -55,6 +55,9 @@ const eventOf = (controller: GrblController): EventTrigger => controller.event!;
 export const createWriteFilter = (controller: GrblController): SerialConnectionWriteFilter => (data) => {
   const line = data.trim();
 
+  // Kinetiq: homing lines and soft resets, for the homed state (TravelGuard)
+  controller.travel.onWrite(line);
+
   if (!line) {
     return data;
   }
@@ -258,6 +261,11 @@ export const createFeederDataFilter = (controller: GrblController): FeederDataFi
       data: 'M6',
       msg: messageSlotOf(controller).take() ?? originalLine,
     });
+  }
+
+  // Kinetiq: jogs stay inside the travel limits (shortened, or dropped: '' skips the line).
+  if (line.startsWith('$')) {
+    return controller.travel.filterJog(line) ?? '';
   }
 
   return line;

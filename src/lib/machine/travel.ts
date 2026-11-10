@@ -18,14 +18,14 @@
  */
 export const TRAVEL_LIMIT_MM = { x: 200, y: 200 } as const;
 
-/** Kept free before the far end of each axis (mm), where nothing stops the machine. */
+/** Kept free before the far end of each axis (mm). */
 export const SAFETY_MARGIN_MM = 2;
 
 /**
- * Kept free before the home switch (mm). Equal to the FluidNC `pulloff_mm` of X and Y: homing
- * leaves the machine exactly here, and moving closer would trip the switch (hard-limit alarm).
+ * Kept free before machine 0 on the home side (mm). FluidNC pulls off the switch and then sets the
+ * position to `mpos_mm` (0), so machine 0 is already clear of the switch and needs no extra margin.
  */
-export const HOME_CLEARANCE_MM = 1;
+export const HOME_CLEARANCE_MM = 0;
 
 /** Which end of the axis the home switch is on: 'max' = travel runs negative from machine 0. */
 export const HOME_END = { x: 'max', y: 'min' } as const;

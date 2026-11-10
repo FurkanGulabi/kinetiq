@@ -10,10 +10,10 @@ All of them are in [`src/lib/machine/travel.ts`](../src/lib/machine/travel.ts):
 |---|---|---|
 | `TRAVEL_LIMIT_MM` | `{ x: 200, y: 200 }` | Travel from the home switch. **Provisional**: the physical travel is about 400 / 410 mm and not measured yet. Put the measured values here. |
 | `SAFETY_MARGIN_MM` | `2` | Kept free before the far end. |
-| `HOME_CLEARANCE_MM` | `1` | Kept free before the home switch. Equal to `pulloff_mm`: homing leaves the machine exactly here. |
+| `HOME_CLEARANCE_MM` | `0` | Kept free before machine 0 on the home side. FluidNC sets machine 0 after pulling off the switch (`pulloff_mm`), so 0 is already clear of it. |
 | `HOME_END` | `{ x: 'max', y: 'min' }` | X travel runs negative from 0, Y travel positive. |
 
-With these, the allowed machine position is X −198 … −1 and Y 1 … 198.
+With these, the allowed machine position is X −198 … 0 and Y 0 … 198.
 
 ## What Kinetiq does
 

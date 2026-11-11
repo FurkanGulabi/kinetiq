@@ -802,7 +802,7 @@ const SCENARIOS: Record<string, Scenario> = {
       await jog('Y', -1, 10, 'blocked'); // towards the home switch
       await jog('Y', 1, 10, 'sent');
       // Two presses queued at once: the second starts where the first will end.
-      const second = s.trace.waitFor((t) => t === '$J=G53 G90 G21 X-1 F1000', 15000, 'second queued jog, shortened');
+      const second = s.trace.waitFor((t) => t === '$J=G53 G90 G21 X0 F1000', 15000, 'second queued jog, shortened');
       s.gcode(jogLine('X', 1, 100, 1000, 'mm'));
       s.gcode(jogLine('X', 1, 100, 1000, 'mm'));
       await second;

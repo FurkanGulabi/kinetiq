@@ -676,6 +676,47 @@ export function jogDirectionView(s: MachineState, axis: 'X' | 'Y' | 'Z', directi
   return { enabled: true };
 }
 
+/**
+ * One step jog in one direction — the jog-pad button and its keyboard key share this gate: the
+ * shared jog gating (jogView) first, then this direction's homing and travel limit (jogDirectionView).
+ */
+export function jogButtonView(s: MachineState, axis: 'X' | 'Y' | 'Z', direction: 1 | -1): ControlState {
+  const jog = jogView(s);
+  if (!jog.canJog) return { enabled: false, reason: jog.reason ?? 'Jog is not available' };
+  return jogDirectionView(s, axis, direction);
+}
+
+export interface KeyboardJogView {
+  /** Keys are listened to at all: the operator turned keyboard jog on and the Position widget is open. */
+  active: boolean;
+  /** Escape may send jog cancel. */
+  cancel: ControlState;
+  /** Why keys do nothing although keyboard jog is on (shown next to the key map); null when keys can move. */
+  reason: string | null;
+}
+
+/**
+ * Keyboard jog (Position widget, opt-in). Motion keys use exactly the pad gate (jogButtonView); this adds:
+ *  - keys only work while the Position widget is expanded, so the operator can see the key map and
+ *    the readouts the keys change;
+ *  - Escape (jog cancel) is limited to an idle workflow, so no key sends anything while a job is
+ *    running or paused (0x85 does not stop a job, and Escape must not look as if it did).
+ */
+export function keyboardJogView(s: MachineState, opts: { enabled: boolean; collapsed: boolean }): KeyboardJogView {
+  if (!opts.enabled) return { active: false, cancel: { enabled: false, reason: 'Keyboard jog is off' }, reason: 'Keyboard jog is off' };
+  if (opts.collapsed) {
+    const reason = 'Keyboard jog is paused while the Position widget is collapsed';
+    return { active: false, cancel: { enabled: false, reason }, reason };
+  }
+  const jog = jogView(s);
+  const cancel: ControlState = !jog.canCancel
+    ? { enabled: false, reason: jog.reason ?? 'Jog cancel is not available' }
+    : s.workflow !== 'idle'
+      ? { enabled: false, reason: 'Keys are disabled while a job is running or paused' }
+      : { enabled: true };
+  return { active: true, cancel, reason: jog.canJog ? null : jog.reason };
+}
+
 export interface ProgramFitView {
   /** Set when the job must not start: not homed, or it does not fit. */
   blocks: string | null;

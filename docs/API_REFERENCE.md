@@ -316,6 +316,7 @@ interface JobRun { status: 'completed' | 'cancelled' | 'error'; startedAt: numbe
 |---|---|
 | Jog one step | `command(port, 'gcode', '$J=G91 G21 X10 F1000', { __sender__: clientId })`: one axis per press, signed distance, `G21` (or `G20` when the UI is in inches), feed in units/min |
 | Cancel jog | `command(port, 'jogCancel')` → real-time `0x85` (`GrblController.js:1515-1518`) |
+| Keyboard jog (opt-in) | No new emits. Arrow keys / PageUp / PageDown send the same `$J=G91 …` line as the matching pad button, one per keydown (auto-repeat ignored); Escape sends `jogCancel` (idle workflow only). Same guard as the pad; details in `ARCHITECTURE.md` §10.4. |
 | Go to (one axis) | `command(port, 'gcode', '$J=G90 G21 X11 F1000', ctx)`: absolute jog in work coordinates at the jog feed |
 | Zero (one axis) | `command(port, 'gcode', 'G10 L20 P1 X0', ctx)`: P from the active WCS (G54 → 1 … G59 → 6), same as the CNCjs Axes widget |
 | Home (one axis) | `writeln(port, '$HX', ctx)`: FluidNC single-axis homing; direct write so it works from Alarm (the Feeder drops lines in Alarm) |

@@ -9,10 +9,24 @@
  * Go to zero: `$J=G90` to work X0 Y0 (+ Z0 when "Include Z"; Z is raised first when below zero).
  * Floating, draggable, collapsible (FloatingWidget); collapsed, the header shows work X/Y/Z.
  * Probe Z is its own widget (ProbeSection).
+ * Keyboard jog (opt-in, off by default, `kinetiq.keyboardJog`): arrows X/Y, PageUp/PageDown Z, Escape = Stop jog,
+ * [ ] = step. One keydown = one step through the same send path and gate as the pad (sendStepJog, jogButtonView).
  * No optimistic state — the readout only changes when the controller reports a new position.
  */
-import { ArrowDown, ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUp, ArrowUpLeft, ArrowUpRight, Crosshair, Square } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import {
+  ArrowDown,
+  ArrowDownLeft,
+  ArrowDownRight,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpLeft,
+  ArrowUpRight,
+  Crosshair,
+  Keyboard,
+  Square,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { sendCommand, sendGcode } from '@/lib/cnc/client';
 import {
   goToZeroLines,
@@ -25,8 +39,19 @@ import {
   type JogAxis,
   type Units,
 } from '@/lib/cnc/commands';
-import { axisControlsView, axisNotHomed, jogDirectionView, jogView, positionView, reportUnits, travelView } from '@/lib/cnc/derive';
-import { useMachine } from '@/lib/cnc/store';
+import {
+  axisControlsView,
+  axisNotHomed,
+  jogButtonView,
+  jogView,
+  keyboardJogView,
+  positionView,
+  reportUnits,
+  travelView,
+} from '@/lib/cnc/derive';
+import { getState, useMachine } from '@/lib/cnc/store';
+import { KEYBOARD_JOG_LEGEND, keyboardJogAction, loadKeyboardJog, saveKeyboardJog } from '@/lib/ui/keyboardJog';
+import { getLayout, useLayout } from '@/lib/ui/layout';
 import { Button } from '@/components/ui/Button';
 import { FloatingWidget } from '@/components/ui/FloatingWidget';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -96,6 +121,77 @@ function useJogPrefs(units: Units) {
   const step = JOG_STEPS[units].includes(current.step) ? current.step : DEFAULT_PREFS[units].step;
   const feed = isValidFeed(current.feed, units) ? current.feed : DEFAULT_PREFS[units].feed;
   return { step, feed, setStep: (s: number) => update({ step: s }), setFeed: (f: number) => update({ feed: f }) };
+}
+
+/**
+ * The one send path for a single step jog: the pad buttons and the keyboard keys both come through here,
+ * so they send the same line under the same gate. Reads the machine state at the moment of the press.
+ * Refuses when the report units changed since `step`/`feed` were chosen.
+ */
+function sendStepJog(axis: JogAxis, direction: 1 | -1, step: number, feed: number, units: Units): boolean {
+  const s = getState();
+  if (reportUnits(s) !== units || !jogButtonView(s, axis, direction).enabled) return false;
+  sendGcode(jogLine(axis, direction, step, feed, units));
+  return true;
+}
+
+/** Stop jog (0x85): the centre pad button and Escape. */
+function sendJogCancel(): void {
+  if (!jogView(getState()).canCancel) return;
+  sendCommand('jogCancel');
+}
+
+/** Keyboard jog on/off; off by default (opt-in, accidental-motion risk). Persisted per browser. */
+function useKeyboardJogPref(): [boolean, (value: boolean) => void] {
+  const [value, setValue] = useState(false);
+  useEffect(() => setValue(loadKeyboardJog()), []);
+  const update = (next: boolean) => {
+    setValue(next);
+    saveKeyboardJog(next);
+  };
+  return [value, update];
+}
+
+interface KeyboardJogTarget {
+  enabled: boolean;
+  step: number;
+  feed: number;
+  units: Units;
+  setStep: (step: number) => void;
+}
+
+/**
+ * One window keydown listener, registered once (Strict Mode's second mount re-adds it after the cleanup
+ * removed the first). It reads the latest panel values from a ref and the machine state from the store
+ * at event time, so nothing goes stale. Bubble phase: React handlers (e.g. SegmentedControl arrows) run first.
+ */
+function useKeyboardJog(target: KeyboardJogTarget) {
+  const ref = useRef(target);
+  ref.current = target;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const current = ref.current;
+      if (!current.enabled) return;
+      const action = keyboardJogAction(event);
+      if (!action) return;
+      const s = getState();
+      const view = keyboardJogView(s, { enabled: current.enabled, collapsed: getLayout().widgets.position.collapsed });
+      if (!view.active) return;
+      // The key is ours while keyboard jog is active, even when the gate refuses it: never scroll the page instead.
+      event.preventDefault();
+      if (action.type === 'jog') {
+        sendStepJog(action.axis, action.direction, current.step, current.feed, current.units);
+      } else if (action.type === 'cancel') {
+        if (view.cancel.enabled) sendJogCancel();
+      } else {
+        const steps = JOG_STEPS[current.units];
+        const next = steps[steps.indexOf(current.step) + action.delta];
+        if (next !== undefined) current.setStep(next);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 }
 
 function JogButton({
@@ -210,11 +306,15 @@ export function PositionPanel() {
     axisControls.goTo.enabled && !atZero && !zeroNotHomed
       ? { enabled: true }
       : { enabled: false, reason: atZero ? 'Already at work zero' : axisControls.goTo.reason ?? zeroNotHomed ?? undefined };
-  /** Jog-pad button state: the shared jog gating, then this direction's travel limit. */
+  /** Jog-pad button state: the shared jog gating, then this direction's travel limit (same gate as the keys). */
   const pad = (axis: JogAxis, direction: 1 | -1) => {
-    const dir = jogDirectionView(machine, axis, direction);
-    return { disabled: !jog.canJog || !dir.enabled, reason: jog.canJog ? dir.reason : jog.reason ?? undefined };
+    const view = jogButtonView(machine, axis, direction);
+    return { disabled: !view.enabled, reason: view.reason };
   };
+  const [keyboardJog, setKeyboardJog] = useKeyboardJogPref();
+  const collapsed = useLayout((l) => l.widgets.position.collapsed);
+  const keyboard = keyboardJogView(machine, { enabled: keyboardJog, collapsed });
+  useKeyboardJog({ enabled: keyboardJog, step, feed, units, setStep });
   const limitedAxes = (['X', 'Y', 'Z'] as const).filter((a) => travel.axes[a].range);
   const notHomedAxes = limitedAxes.filter((a) => !travel.axes[a].homed);
   let zeroPreview: string;
@@ -233,8 +333,7 @@ export function PositionPanel() {
   };
 
   const onJog = (axis: JogAxis, direction: 1 | -1) => {
-    if (pad(axis, direction).disabled) return;
-    sendGcode(jogLine(axis, direction, step, feed, units));
+    sendStepJog(axis, direction, step, feed, units);
   };
 
   /** Diagonal: off when either of its two directions is off (not homed, at a travel limit). */
@@ -315,7 +414,27 @@ export function PositionPanel() {
       <div className="my-5 h-px bg-line" aria-hidden />
 
       {/* Jog */}
-      <h3 className="panel-label mb-3">Jog</h3>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="panel-label">Jog</h3>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={keyboardJog}
+          onClick={() => setKeyboardJog(!keyboardJog)}
+          title={
+            keyboardJog
+              ? 'Keyboard jog is on: arrow keys and PageUp/PageDown jog one step per press. Click to turn off.'
+              : 'Turn on keyboard jog: arrow keys and PageUp/PageDown jog one step per press'
+          }
+          className={`pressable inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[12px] ${
+            keyboardJog ? 'border-accent text-accent' : 'border-line text-ink-2 hover-fine:border-ink-3 hover-fine:text-ink'
+          }`}
+        >
+          <Keyboard size={14} aria-hidden />
+          Keyboard jog
+          <span className={`font-mono text-[11px] font-semibold ${keyboardJog ? '' : 'text-ink-3'}`}>{keyboardJog ? 'On' : 'Off'}</span>
+        </button>
+      </div>
       <div className="flex items-start justify-center gap-6">
         <div className="grid grid-cols-3 grid-rows-3 gap-1.5" role="group" aria-label="XY jog">
           <DiagonalJogButton x={-1} y={1} icon={<ArrowUpLeft size={arrow} />} {...diag(-1, 1)} onJog={onDiagonal} />
@@ -327,7 +446,7 @@ export function PositionPanel() {
             aria-label="Stop jog"
             title="Stop jog (cancel the current jog move)"
             disabled={!jog.canCancel}
-            onClick={() => sendCommand('jogCancel')}
+            onClick={sendJogCancel}
             className="pressable flex h-[52px] w-[52px] items-center justify-center rounded-md border border-line bg-surface text-ink-2 hover-fine:border-ink-3 hover-fine:text-ink disabled:cursor-not-allowed disabled:text-ink-3"
           >
             <Square size={16} fill="currentColor" aria-hidden />
@@ -343,6 +462,33 @@ export function PositionPanel() {
           <JogButton axis="Z" direction={-1} icon={<ArrowDown size={arrow} />} {...pad('Z', -1)} onJog={onJog} />
         </div>
       </div>
+
+      {/* Keyboard jog key map (only while it is on) */}
+      {keyboardJog ? (
+        <div
+          role="note"
+          aria-label="Keyboard jog keys"
+          className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-[12px] text-ink-2"
+        >
+          <span className="inline-flex items-center gap-1 text-accent">
+            <Keyboard size={13} aria-hidden />
+            Keys
+          </span>
+          {KEYBOARD_JOG_LEGEND.map((item) => (
+            <span key={item.label} className="inline-flex items-center gap-1">
+              {item.keys.map((k) => (
+                <kbd key={k} className="rounded border border-line bg-surface-2 px-1 font-mono text-[11px] leading-[18px] text-ink">
+                  {k}
+                </kbd>
+              ))}
+              <span className="text-ink-3">{item.label}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {keyboardJog && keyboard.active && keyboard.reason === null ? (
+        <p className="mt-1.5 text-center text-[11px] text-ink-3">One step per key press. Keys are ignored while typing or in a dialog.</p>
+      ) : null}
 
       {/* Travel limits: room left on each limited axis, or what to home */}
       {travel.active && position.ready ? (

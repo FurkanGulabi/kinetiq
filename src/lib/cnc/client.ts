@@ -401,6 +401,20 @@ export function sendLine(line: string): void {
 }
 
 /**
+ * Run a saved macro (`macro:run`, Kinetiq). Only the id is sent: the backend reads the content from
+ * its macro store and queues the lines on the Feeder (feeder filter and TravelGuard apply), and it
+ * refuses with a `[MSG:WARN: Kinetiq: …]` console line when the machine is not ready.
+ * Callers check derive.macroView() first.
+ */
+export function runMacro(id: string): void {
+  const { port, phase } = getState().connection;
+  if (!socket || !port || phase !== 'open' || !id) {
+    return;
+  }
+  socket.emit('command', port, 'macro:run', id, { __sender__: clientId });
+}
+
+/**
  * Real-time overrides (CNCjs `feedOverride` / `spindleOverride` → GRBL 0x90–0x94 / 0x99–0x9D).
  * `step` is +10, −10, +1, −1, or 0 to reset to 100 %. Real-time bytes: safe while a job streams.
  */

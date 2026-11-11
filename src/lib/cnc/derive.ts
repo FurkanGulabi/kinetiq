@@ -558,15 +558,25 @@ export function probeView(s: MachineState): ProbeView {
   return { touching, canProbe, canCancel: running };
 }
 
-/** Shared start conditions for probing sequences (Z probe, height map). */
-function probingGate(s: MachineState, active: string, touching: boolean): ControlState {
+/**
+ * Shared start conditions for a sequence of lines through the Feeder that moves the machine (Z probe,
+ * height map, macros): no job, controller Idle, no line awaiting its ok, no other Kinetiq operation.
+ */
+function feederSequenceGate(s: MachineState, active: string): ControlState | null {
   const off = (reason: string): ControlState => ({ enabled: false, reason });
   if (s.workflow !== 'idle') return off('Not available while a job is running or paused');
   if (active === 'Alarm') return off('Alarm — use Home or Unlock in the top bar first');
   if (active !== 'Idle') return off(`Not available while ${active}`);
   if (s.feeder?.pending) return off('Waiting for the previous command to be accepted');
   if (busyReason(s)) return off(busyReason(s)!);
-  if (touching) return off('The probe reads as touching. Check the clip before probing.');
+  return null;
+}
+
+/** Shared start conditions for probing sequences (Z probe, height map). */
+function probingGate(s: MachineState, active: string, touching: boolean): ControlState {
+  const gate = feederSequenceGate(s, active);
+  if (gate) return gate;
+  if (touching) return { enabled: false, reason: 'The probe reads as touching. Check the clip before probing.' };
   return { enabled: true };
 }
 
@@ -789,4 +799,37 @@ export function workAreaFit(s: MachineState, area: { xMin: number; xMax: number;
   };
   const fit = checkFit(extent, { ...envelope, z: null }, wco, '');
   return fit.fits ? null : `The area leaves the travel limits: ${fit.overflows.join(', ')}`;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Macros — saved G-code snippets run with `macro:run` (lib/macros, src/server/macros.ts)
+ * ---------------------------------------------------------------------------------------------- */
+
+export interface MacroView {
+  /** Run (any macro): the same conditions the backend checks before it queues the lines. */
+  run: ControlState;
+  /**
+   * What the Feeder is doing (macro, jog or probe lines): 'held' after M0/M1/M6 (only Reset releases
+   * it), 'sending' while lines are queued or one awaits its ok. null when it is empty.
+   */
+  feeder: { phase: 'held' | 'sending'; queued: number } | null;
+}
+
+/**
+ * Run is enabled only when connected and ready, no job, controller Idle, the Feeder empty (nothing
+ * queued, in flight or held) and no other Kinetiq operation (probe, height map, settings).
+ * Editing macros needs no connection and is not gated here.
+ */
+export function macroView(s: MachineState): MacroView {
+  const off = (reason: string): ControlState => ({ enabled: false, reason });
+  const f = s.feeder;
+  const feeder = f?.hold ? { phase: 'held' as const, queued: f.queue } : f && (f.queue > 0 || f.pending) ? { phase: 'sending' as const, queued: f.queue } : null;
+  if (s.connection.phase !== 'open') return { run: off('Connect to a controller first'), feeder: null };
+  const active = s.controller.state?.status.activeState ?? '';
+  if (!active) return { run: off('Waiting for controller status'), feeder };
+  const gate = feederSequenceGate(s, active);
+  if (gate) return { run: gate, feeder };
+  if (feeder?.phase === 'held') return { run: off('Earlier commands are held (M0/M1/M6): Reset clears them'), feeder };
+  if (feeder) return { run: off('Earlier commands are still being sent'), feeder };
+  return { run: { enabled: true }, feeder };
 }

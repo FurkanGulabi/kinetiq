@@ -74,6 +74,7 @@ kinetiq/
     │   ├── session.ts           GET /api/kinetiq/session (JWT mint, Host check); isAuthorized() for the HTTP APIs;
     │   │                        socket handshake checks authorizeIPAddress() / validateUser()
     │   ├── jobs.ts              /api/kinetiq/jobs (job library)
+    │   ├── macros.ts            /api/kinetiq/macros (saved macros, rc key kinetiq.macros; macro:run lookup)
     │   ├── fluidnc/             /api/kinetiq/machine-config (settings editor): exchange.ts, xmodem.ts, machineConfig.ts
     │   │   — the CNCjs GRBL backend, rewritten into TypeScript (BACKEND_INTEGRATION.md §7) —
     │   ├── protocol.ts          socket event/command names + payload types, shared with src/lib/cnc
@@ -100,12 +101,13 @@ kinetiq/
     │   │   ├── store.ts         machine store + useMachine(selector) + subscribe()
     │   │   ├── console-store.ts ring buffer (2,000 lines), per-frame batching, useConsole(), command history
     │   │   ├── derive.ts        pure views and gating: connectionView, machineStateView, jogView, axisControlsView,
-    │   │   │                    jobView, overridesView, consoleView, settingsView, probeView, levelingView, …
+    │   │   │                    jobView, overridesView, consoleView, settingsView, probeView, levelingView, macroView, …
     │   │   ├── commands.ts      line builders: jogLine, moveAxisLine, zeroAxisLine, homeAxisLine, goToZeroLines
     │   │   ├── lineSequence.ts  one-line-at-a-time sequences with stop rules (Probe Z, height map)
     │   │   └── probe.ts         Z probe with a touch plate
     │   ├── gcode/toolpath.ts    G-code → 3D toolpath (M5b)
     │   ├── jobs/library.ts      job library client
+    │   ├── macros/              macro.ts (type, limits, validation; shared with the server), library.ts (API client + store)
     │   ├── leveling/            heightmap.ts, run.ts (probing), compensate.ts (BED_LEVELING.md)
     │   ├── fluidnc/             settings editor client: machineConfig.ts, configText.ts, schema.json
     │   └── ui/                  layout.ts (widget positions, kinetiq.layout.v1), spring.ts (drag/throw physics), keyboardJog.ts (keyboard jog key map and focus/dialog checks)
@@ -117,6 +119,7 @@ kinetiq/
         ├── position/                   PositionPanel (readout, jog, Go to zero), AxisRow, ProbeSection (Probe Z widget)
         ├── job/                        JobPanel, Overrides, UploadDialog, RecentJobs
         ├── console/ConsoleWidget.tsx   log list + input (floating widget, §10.8)
+        ├── macros/                     MacrosWidget, MacroDialog (floating widget, §10.10)
         ├── visualisation/              VisualisationPanel + MachineScene (three.js)
         ├── leveling/                   LevelingPanel (sheet), LevelingWorkspace, HeightMapView
         └── settings/                   SettingsPanel (sheet), SettingsEditor
@@ -303,7 +306,7 @@ At the user's request the 3D view became the page background and every other reg
 | `Readout` | `primary`, `secondary` | Mono, tabular, fixed decimals, unit suffix in `--ink-3` |
 | `Meter` | `tone` (neutral, accent, ok, warn, crit) | Track plus fill, `role="progressbar"`, `aria-valuenow` |
 | `FloatingWidget` | — | Glass widget: drag by the header, collapse to the header (chevron or double-click) with a compact summary, click to bring to front. Layout in `lib/ui/layout.ts`. |
-| `ConfirmDialog` | — | Radix Dialog; used for **Stop job** |
+| `ConfirmDialog` | — | Radix Dialog; used for **Stop job** and **Delete macro** (`cancelLabel` names the safe choice) |
 
 ---
 
@@ -325,9 +328,9 @@ At the user's request the 3D view became the page background and every other reg
 ```
 
 - **Layers (back to front):** 3D view (z 0) → status chip and view toolbar (z 5) → widgets (z 10–13, last touched on top) → sheets and their scrim (z 30) → alert cards (z 35) → top bar (z 40) → dialogs (z 40–50).
-- **Widgets:** Position & Jog (560 px), Job (480 px), Probe Z (400 px; split out of the Position panel), Console (480 px, §10.8). Fixed widths. Default slots: Position top-left, Job top-right, Probe Z bottom-right and Console just above it, both collapsed (they grow upward when opened). Position, collapsed state and stacking order are remembered per browser (`localStorage` `kinetiq.layout.v1`); **Reset layout** (icon button in the top bar) glides them back to their default slots.
+- **Widgets:** Position & Jog (560 px), Job (480 px), Probe Z (400 px; split out of the Position panel), Console (480 px, §10.8), Macros (440 px, §10.10). Fixed widths. Default slots: Position top-left, Job top-right, Probe Z bottom-right, Console just above it and Macros above Console, all three collapsed (they grow upward when opened). Position, collapsed state and stacking order are remembered per browser (`localStorage` `kinetiq.layout.v1`); **Reset layout** (icon button in the top bar) glides them back to their default slots.
 - **Dragging** only from the header, never from controls inside it, so a jog press can never move a widget. A widget is kept fully on screen when it fits, otherwise its header stays visible; shrinking the window pulls widgets back in.
-- **Collapsed widgets keep their status visible:** Position shows work X/Y/Z, Job keeps its status badge plus progress and file name, Probe Z keeps the probe input and the run state, Console shows the newest line that is not `ok`.
+- **Collapsed widgets keep their status visible:** Position shows work X/Y/Z, Job keeps its status badge plus progress and file name, Probe Z keeps the probe input and the run state, Console shows the newest line that is not `ok`, Macros the number of macros (or "Sending · n queued" / "Commands held" while the Feeder is busy).
 - **3D view:** fills the window; Fit and the view presets frame the content in the free area (window minus top bar, toolbar and open widgets on each side). The view toolbar sits at the bottom centre and slides sideways when an open widget reaches into the bottom band.
 - **Sheets:** Settings and Leveling open as large glass sheets below the top bar over a dim scrim (non-modal), so Hold and Reset stay clickable.
 
@@ -442,12 +445,27 @@ The deferred M3 console returns as a fifth floating widget (480 px). It starts c
 - **Settings** (top bar): opens the FluidNC machine settings sheet (`SettingsPanel` → `SettingsEditor`), backed by `/api/kinetiq/machine-config`. See `SETTINGS_EDITOR.md`.
 - Both sheets are non-modal Radix Dialogs below the top bar (§10.1), so Hold and Reset stay reachable. Below 1600 px window width their top-bar buttons are icon-only.
 
+### 10.10 Macros (floating widget, 2026-11-11)
+
+Named, saved G-code snippets run with one click (`src/components/macros/MacrosWidget.tsx`, `MacroDialog.tsx`; client `lib/macros/library.ts`; shared rules `lib/macros/macro.ts`; backend `src/server/macros.ts` and the `macro:run` command, `API_REFERENCE.md` §7.6). Starts collapsed in the right column above the Console.
+
+| Element | Behaviour |
+|---|---|
+| List | One row per macro: name, line count and first line (mono), **Run**, **Edit** (pencil), **Delete** (trash). Empty state: a short explanation and **Add macro** (primary). **Add macro** under the list otherwise. |
+| Run | Sends only the macro id (`macro:run`). The backend reads the content, refuses when the machine is not ready (a `[MSG:WARN: Kinetiq: macro … not run. …]` console line) and otherwise queues the lines on the Feeder exactly like the jog / console `gcode` path, so the feeder filter (`[expr]`, `%var=`) and TravelGuard (every `$J=` kept inside the travel limits) apply. No confirmation, like the console; the row's hover note says how many lines go out now. |
+| Gating | `derive.macroView` (shares `feederSequenceGate` with Probe Z and the height map): connected and ready, workflow idle, controller Idle (not Alarm), the Feeder empty (nothing queued, in flight or held) and no Kinetiq sequence (probe, height map, settings). Disabled Run buttons carry the reason, which is also shown next to **Add macro**. The backend applies the same rules (except the browser-only probe/height-map flags) before it queues anything. |
+| Running | While Feeder lines are queued or in flight the widget shows **Sending · n lines queued** and how to stop it. **Stopping a macro: Hold, then Reset in the top bar.** Hold (`!`) stops the motion; Reset (`reset`: workflow stop, `feeder.reset()`, `0x18`) drops every queued line. Stop jog (`0x85`) only ends the current jog and the next queued line would still be sent; the Job widget's Stop does not apply (no job). No dedicated stop button was added. |
+| Editor | Radix Dialog: name and a monospace textarea, with the line and character count. The shared validator runs before Save (server checks again): name 1–60 characters; 1–10,000 characters of plain printable ASCII (other characters reach the port as bytes 0x80–0xFF, which GRBL reads as real-time commands); no `%wait` (holds the job Sender in a manual line, CNCjs quirk) and no M0/M1/M6 (they hold the Feeder until Reset). Names are unique (case-insensitive); at most 50 macros. Editing needs no connection. |
+| Delete | `ConfirmDialog` ("Delete macro?", Keep / Delete). |
+| Sync | The list is not machine state: it lives in its own store, refreshed when the widget mounts or is opened, when the tab regains focus or becomes visible, and after each change. A 404 on edit refreshes the list (deleted in another tab). |
+| Keyboard jog | The editor is a dialog with inputs, so `lib/ui/keyboardJog.ts` leaves every key alone while it is open (checked on the fake controller with keyboard jog on). |
+
 ---
 
 ## 11. Next.js integration strategy
 
 - **Single route `/`.** `page.tsx` is a Server Component that renders a static shell plus `<Workspace/>`, a Client Component that owns the socket lifecycle. No Server Actions, no Route Handlers, no data fetching on the server.
-- **Custom server owns the process.** `next({ dev, hostname, port, httpServer: server })`, then `app.getRequestHandler()` for everything except Kinetiq's own HTTP APIs (`/api/kinetiq/session`, `/api/kinetiq/jobs/*`, `/api/kinetiq/machine-config/*`, handled by `server.ts`) and `/socket.io/*` (answered by Engine.IO).
+- **Custom server owns the process.** `next({ dev, hostname, port, httpServer: server })`, then `app.getRequestHandler()` for everything except Kinetiq's own HTTP APIs (`/api/kinetiq/session`, `/api/kinetiq/jobs/*`, `/api/kinetiq/machine-config/*`, `/api/kinetiq/macros/*`, handled by `server.ts`) and `/socket.io/*` (answered by Engine.IO).
 - **Environment:** `KINETIQ_HOST` (default `127.0.0.1`), `KINETIQ_PORT` (else `PORT`, default `8000`), `KINETIQ_RC` (default `~/.kinetiqrc`), `KINETIQ_LOG_LEVEL` (backend log level, default `info`), `KINETIQ_JOBS_DIR` (default `~/.kinetiq/jobs`), `KINETIQ_CONFIG_BACKUP_DIR` (default `~/.kinetiq/config-backups`). `NODE_ENV=production` selects production mode.
 - **Scripts:**
   - `dev`: `tsx watch server.ts`, excluding `src/app`, `src/components` and `src/lib` from the watch (Next's HMR handles those, so editing the UI never restarts the server or closes the port)
@@ -462,4 +480,4 @@ The deferred M3 console returns as a fifth floating widget (480 px). It starts c
 
 ## 12. Future expansion (designed for, not built)
 
-Excluded from v1, but the architecture adds them without restructuring: macros, WCS screens, light theme. (G-code visualisation, a job library, Z probing, bed leveling, feed/spindle overrides and opt-in keyboard jogging (§10.4) have since been built the same way.) Each would be a new component reading the same store and using an existing backend command (`API_REFERENCE.md` §11). No abstraction is pre-built for them.
+Excluded from v1, but the architecture adds them without restructuring: WCS screens, light theme. (G-code visualisation, a job library, Z probing, bed leveling, feed/spindle overrides, opt-in keyboard jogging (§10.4) and macros (§10.10) have since been built the same way.) Each would be a new component reading the same store and using an existing backend command (`API_REFERENCE.md` §11). No abstraction is pre-built for them.

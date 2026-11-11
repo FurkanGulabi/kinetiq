@@ -10,7 +10,7 @@
  */
 import { useSyncExternalStore } from 'react';
 
-export type WidgetId = 'position' | 'job' | 'probe' | 'console';
+export type WidgetId = 'position' | 'job' | 'probe' | 'console' | 'macros';
 
 export interface WidgetLayout {
   x: number | null;
@@ -44,6 +44,7 @@ export const WIDGET_WIDTH: Record<WidgetId, number> = {
   job: 480,
   probe: 400,
   console: 480,
+  macros: 440,
 };
 
 const STORAGE_KEY = 'kinetiq.layout.v1';
@@ -53,11 +54,12 @@ const DEFAULTS: Record<WidgetId, WidgetLayout> = {
   job: { x: null, y: null, collapsed: false },
   probe: { x: null, y: null, collapsed: true },
   console: { x: null, y: null, collapsed: true },
+  macros: { x: null, y: null, collapsed: true },
 };
 
 let state: LayoutState = {
   widgets: structuredClone(DEFAULTS),
-  order: ['console', 'probe', 'job', 'position'],
+  order: ['macros', 'console', 'probe', 'job', 'position'],
   resetCount: 0,
 };
 const rects: Partial<Record<WidgetId, WidgetRect>> = {};
@@ -144,7 +146,7 @@ export function bringToFront(id: WidgetId) {
 export function resetLayout() {
   state = {
     widgets: structuredClone(DEFAULTS),
-    order: ['console', 'probe', 'job', 'position'],
+    order: ['macros', 'console', 'probe', 'job', 'position'],
     resetCount: state.resetCount + 1,
   };
   persist();
@@ -155,8 +157,9 @@ export function resetLayout() {
 export const COLLAPSED_HEIGHT = 46;
 
 /**
- * Default slot for a widget: Position top-left, Job top-right, Probe Z bottom-right and Console
- * just above it (both collapsed; they grow upward when opened). `height` is the widget's height.
+ * Default slot for a widget: Position top-left, Job top-right, Probe Z bottom-right, Console just
+ * above it and Macros above Console (all three collapsed; they grow upward when opened). `height` is
+ * the widget's height.
  */
 export function defaultSlot(id: WidgetId, height: number): { x: number; y: number } {
   const vw = window.innerWidth;
@@ -174,6 +177,12 @@ export function defaultSlot(id: WidgetId, height: number): { x: number; y: numbe
       return {
         x: vw - WIDGET_WIDTH.console - EDGE,
         y: Math.max(top, vh - TOOLBAR_SPACE - COLLAPSED_HEIGHT - 8 - height - EDGE),
+      };
+    case 'macros':
+      // Right column, above the collapsed Console (which sits above Probe Z).
+      return {
+        x: vw - WIDGET_WIDTH.macros - EDGE,
+        y: Math.max(top, vh - TOOLBAR_SPACE - 2 * (COLLAPSED_HEIGHT + 8) - height - EDGE),
       };
   }
 }

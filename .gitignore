@@ -8,3 +8,11 @@ next-env.d.ts
 # Python bytecode (scripts/fake-controller.py)
 __pycache__/
 graphify-out/
+
+# Local environment and logs
+.env*
+*.log
+
+# Claude Code local state (worktrees, per-user settings)
+.claude/worktrees/
+.claude/settings.local.json

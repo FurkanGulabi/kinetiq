@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Console log (IMPLEMENTATION_PLAN M3, API_REFERENCE §6): what the controller sends
+ * Console log (API_REFERENCE §6): what the controller sends
  * (`serialport:read`) and what is written to it (`serialport:write`), newest last.
  *
  * - Ring buffer of MAX_LINES entries, so a long session cannot grow without bound.

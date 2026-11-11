@@ -266,7 +266,7 @@ class SocketEngine {
             // Socket input is not validated: these are whatever the client sent.
             let { controllerType = GRBL, baudrate, rtscts, pin } = { ...options } as Partial<typeof options>;
 
-            // Kinetiq: own-property lookup, like GrblController.command() (plan §3a bug 8), so a
+            // Kinetiq: own-property lookup, like GrblController.command() (BACKEND_INTEGRATION.md §7.3 bug 8), so a
             // controllerType such as 'constructor' is "Not supported" instead of reaching Object.
             const Controller = Object.prototype.hasOwnProperty.call(this.controllerClass, controllerType)
               ? this.controllerClass[controllerType]

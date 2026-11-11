@@ -1,5 +1,5 @@
 /**
- * Protocol scenario recorder (docs/BACKEND_REWRITE_PLAN.md §4 "Verification without tests").
+ * Protocol scenario recorder: verification without tests (README.md in this folder).
  *
  * For each scenario: fresh temp dir → fake controller (scripts/fake-controller.py --trace) → an
  * isolated headless Kinetiq server on its own port → Socket.IO client that does what the UI does →
@@ -588,7 +588,7 @@ async function nextQuietPoint(s: Session): Promise<void> {
 }
 
 /* ------------------------------------------------------------------------------------------------
- * Scenarios (docs/BACKEND_REWRITE_PLAN.md §4)
+ * Scenarios
  * ---------------------------------------------------------------------------------------------- */
 
 interface Scenario {

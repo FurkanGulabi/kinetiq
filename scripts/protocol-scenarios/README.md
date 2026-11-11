@@ -1,6 +1,6 @@
 # Protocol scenarios (serial traffic diff)
 
-The safety net for the backend rewrite (docs/BACKEND_REWRITE_PLAN.md §4): record exactly what the backend writes to the serial port in fixed scenarios, then diff against the baseline recorded with the CNCjs JavaScript backend. There are no automated tests in this project; this is the check for each rewrite phase.
+The regression check for backend changes: record exactly what the backend writes to the serial port in fixed scenarios, then diff against the committed baseline. The baseline was first recorded with the CNCjs JavaScript backend and guarded its rewrite into TypeScript. There are no automated tests in this project; this is the check for anything that can change what reaches the machine.
 
 ```bash
 npm run protocol:record -- --out /tmp/proto-new            # all scenarios (about 2 minutes)
@@ -8,7 +8,7 @@ npm run protocol:record -- --out /tmp/proto-new 04-job-stop 08-settings-editor  
 npm run protocol:compare -- scripts/protocol-scenarios/baseline /tmp/proto-new
 ```
 
-`compare` prints one line per scenario, the poll cadence, and a unified diff for each scenario that differs. It exits 1 on any difference. A difference the phase meant to make (one of the removals in plan §3, or a fixed bug) is accepted by re-recording the baseline: `npm run protocol:record -- --out scripts/protocol-scenarios/baseline`, then commit it together with the change.
+`compare` prints one line per scenario, the poll cadence, and a unified diff for each scenario that differs. It exits 1 on any difference. A difference the change meant to make (a new feature, or a fixed bug) is accepted by re-recording the baseline: `npm run protocol:record -- --out scripts/protocol-scenarios/baseline`, then commit it together with the change.
 
 Record options: `--out DIR` (default: a new directory in `$TMPDIR`), `--port N` (server port, default 8077; 8000 is refused), `--keep` (keep each scenario's temp dir with `fake.log`, `server.log` and `events.log`, the socket events seen by the driver; failed scenarios always keep it).
 

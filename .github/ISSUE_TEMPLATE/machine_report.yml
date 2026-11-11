@@ -1,0 +1,25 @@
+name: Machine report
+description: Tell us how Kinetiq runs on your controller or firmware
+labels: [hardware]
+body:
+  - type: input
+    id: firmware
+    attributes:
+      label: Controller and firmware
+      placeholder: ESP32, FluidNC v4.0.1
+    validations:
+      required: true
+  - type: textarea
+    id: machine
+    attributes:
+      label: Machine
+      description: Axes, home corner, limit switches, travel.
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: What you tried
+      description: What worked and what did not (connect, home, jog, travel limits, a job, Probe Z, leveling, settings editor, macros).
+    validations:
+      required: true

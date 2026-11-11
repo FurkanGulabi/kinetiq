@@ -1,8 +1,8 @@
 /**
  * Kinetiq CNC backend bootstrap.
  *
- * The backend is the CNCjs 1.11.5 GRBL server code, rewritten into TypeScript in phases
- * (docs/BACKEND_REWRITE_PLAN.md): the Socket.IO engine (engine/SocketEngine.ts), the controller
+ * The backend is the CNCjs 1.11.5 GRBL server code, rewritten into TypeScript
+ * (docs/BACKEND_INTEGRATION.md §7.1): the Socket.IO engine (engine/SocketEngine.ts), the controller
  * (controller/), Sender/Feeder/Workflow, SerialConnection and the config/store/logger services.
  * No Marlin/Smoothie/TinyG controllers, no Express app.
  * This file does what CNCjs's server/index.js did for it: load the rc file and the secret.

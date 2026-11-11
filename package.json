@@ -2,6 +2,23 @@
   "name": "kinetiq",
   "version": "0.1.0",
   "description": "Kinetiq — Advanced Motion Control. A modern control interface for GRBL-compatible CNC machines.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FurkanGulabi/kinetiq.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FurkanGulabi/kinetiq/issues"
+  },
+  "keywords": [
+    "cnc",
+    "grbl",
+    "fluidnc",
+    "gcode",
+    "gcode-sender",
+    "esp32",
+    "cnc-controller"
+  ],
   "private": true,
   "engines": {
     "node": ">=20"
@@ -9,9 +26,9 @@
   "scripts": {
     "dev": "tsx watch --clear-screen=false --exclude ./src/app --exclude ./src/components --exclude ./src/lib server.ts",
     "build": "next build && tsc -p tsconfig.server.json",
-    "start": "NODE_ENV=production node dist/server.js",
+    "start": "node scripts/start.mjs",
     "fake-controller": "python3 scripts/fake-controller.py",
-    "dev:fake": "KINETIQ_RC=\"${TMPDIR:-/tmp}/kinetiq-fake.rc\" npm run dev",
+    "dev:fake": "node scripts/dev-fake.mjs",
     "protocol:record": "tsx scripts/protocol-scenarios/record.mts",
     "protocol:compare": "node scripts/protocol-scenarios/compare.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"

@@ -13,7 +13,9 @@ npm run dev:fake          # terminal 2
 2. `npm run dev:fake` is `npm run dev` with `KINETIQ_RC` pointing at that rc file. Your real `~/.kinetiqrc` is not touched.
 3. In Kinetiq, pick **kinetiq-fake0** and Connect.
 
-Requirements: Python 3.8+ on macOS or Linux (it uses the standard `pty` module, no packages). Windows is not supported.
+Requirements: Python 3.8+ on macOS or Linux (it uses the standard `pty` module, no packages).
+
+**Windows:** the fake controller cannot run natively (no `pty`; it exits with a message). Run both commands inside WSL (Ubuntu) from a clone of the repo in the WSL filesystem, with Node and Python installed there; open `http://127.0.0.1:8000` in the Windows browser (WSL forwards localhost). `npm run dev:fake` itself is cross-platform (a Node launcher, `scripts/dev-fake.mjs`).
 
 Options (`npm run fake-controller -- --help`):
 

@@ -376,7 +376,7 @@ export function sendCommand(cmd: MachineCommand): void {
 
 /**
  * Queue one G-code line through the CNCjs Feeder (`command('gcode')`): one line in flight,
- * released on ok/error, and dropped by the backend while in Alarm (CNCJS_ANALYSIS.md S3).
+ * released on ok/error, and dropped by the backend while in Alarm (BACKEND_INTEGRATION.md §7.4, S3).
  * Used for jogging (`$J=`). Callers must check derive.jogView() first.
  */
 export function sendGcode(line: string): void {
@@ -390,7 +390,7 @@ export function sendGcode(line: string): void {
 /**
  * Write one line directly (CNCjs `writeln`), bypassing the Feeder — same path as the console.
  * Needed for `$H<axis>`: homing must work from Alarm, where the Feeder drops lines.
- * Callers must check the workflow is idle (CNCJS_ANALYSIS.md hazard H1).
+ * Callers must check the workflow is idle (BACKEND_INTEGRATION.md §7.4, hazard H1).
  */
 export function sendLine(line: string): void {
   const { port, phase } = getState().connection;

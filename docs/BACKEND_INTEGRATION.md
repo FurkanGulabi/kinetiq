@@ -169,6 +169,7 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 - `src/server/backend.ts`: loads the backend (rc file, secret, `SocketEngine`), typed against the real modules, and closes controllers on shutdown.
 - `src/server/session.ts`: the session endpoint (§4.1), the auth check shared by the HTTP APIs, and the socket handshake's IP and user checks (`authorizeIPAddress`, `validateUser`).
 - `src/server/jobs.ts`: the job library (`API_REFERENCE.md` §7.4).
+- `src/server/macros.ts`: saved macros in the rc file (`kinetiq.macros`) and the lookup behind the `macro:run` command (`API_REFERENCE.md` §7.6).
 - `src/server/fluidnc/`: the FluidNC config editor API (`SETTINGS_EDITOR.md` §3). It sends `$` commands through `controller.writeln()` one at a time and, for saving, an XModem transfer on the raw port while the controller is in exclusive mode.
 - The GRBL backend itself (D2, revised), CNCjs 1.11.5 rewritten into TypeScript (§7.1):
   - `src/server/protocol.ts`: socket event and command names and payload types, shared with `src/lib/cnc`.
@@ -192,7 +193,7 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 
 ### 7.2 Security rule: shell commands
 
-`src/server/events/TaskRunner.ts` runs shell commands. Today its only input is the `events` list in the rc file (`~/.kinetiqrc`), read by `src/server/events/EventTrigger.ts`. No socket or HTTP handler reaches it, and the only config value Kinetiq writes is `secret`.
+`src/server/events/TaskRunner.ts` runs shell commands. Today its only input is the `events` list in the rc file (`~/.kinetiqrc`), read by `src/server/events/EventTrigger.ts`. No socket or HTTP handler reaches it. Kinetiq writes three config values, all its own: `secret` (at first start), `kinetiq.travel` (measured travel, `TravelGuard`) and `kinetiq.macros` (the macro API). Macro content only ever goes to the Feeder (the `gcode` command path), never to `taskRunner.run()`; the macro API reads only `name` and `content` from a request and writes no other key.
 
 Keep it that way:
 - Never pass socket, HTTP or other frontend input to `taskRunner.run()`.

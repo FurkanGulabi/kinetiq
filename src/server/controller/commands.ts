@@ -13,8 +13,35 @@
  * hardware check).
  */
 import ensureArray from '../util/ensureArray';
-import type { ControllerCommandName, ControllerCommands } from '../protocol';
+import logger from '../logger';
+import { macroLines, validateMacroInput } from '../../lib/macros/macro';
+import { isExchangeBusy } from '../fluidnc/exchange';
+import { findMacro } from '../macros';
+import { WORKFLOW_STATE_IDLE } from '../streaming/Workflow';
+import type { ControllerCommandName, ControllerCommands, WriteContext } from '../protocol';
 import type GrblController from './GrblController';
+
+const log = logger('controller:Grbl');
+
+/**
+ * Kinetiq: why `macro:run` must not queue anything now, or null. A macro starts only on a quiet
+ * machine, so its lines never interleave with a job, a settings exchange or earlier Feeder lines.
+ * These are the backend's own rules; the UI shows the same ones first (derive.ts macroView).
+ */
+function macroRunRefusal(controller: GrblController): string | null {
+  if (controller.isClose()) return 'The serial port is not open';
+  if (controller.workflow!.state !== WORKFLOW_STATE_IDLE) return 'A job is running or paused';
+  if (controller.exclusive || isExchangeBusy()) return 'A settings operation is using the serial port';
+  const feeder = controller.feeder!;
+  if (feeder.state.hold) return 'Earlier commands are held (M0/M1/M6): Reset clears them';
+  if (feeder.size() > 0 || feeder.isPending()) return 'Earlier commands are still being sent: wait for them to finish';
+  const runner = controller.runner!;
+  const active = runner.state.status?.activeState || '';
+  if (!active) return 'Waiting for controller status';
+  if (runner.isAlarm()) return 'Alarm: use Home or Unlock first';
+  if (!runner.isIdle()) return `Machine is ${active}: wait until it is Idle`;
+  return null;
+}
 
 export type CommandHandler<C extends ControllerCommandName> = (...args: ControllerCommands[C]) => void | Promise<void>;
 
@@ -136,4 +163,28 @@ export const createCommandTable = (controller: GrblController): CommandTable => 
   'travel:apply': () => controller.travel.applyMeasure(),
   'travel:dismiss': () => controller.travel.dismissMeasure(),
   'travel:backoff': () => controller.travel.backoff(),
+  // Kinetiq: run a saved macro by id (src/server/macros.ts). Content never comes from the socket.
+  'macro:run': (id, context) => {
+    const say = (level: 'INFO' | 'WARN', text: string) => controller.emit('serialport:read', `[MSG:${level}: Kinetiq: ${text}]`);
+    const macro = findMacro(id);
+    if (!macro) {
+      log.warn(`Macro not run: no macro with id ${JSON.stringify(id)}`);
+      say('WARN', 'macro not run. It no longer exists: reopen the Macros widget to refresh the list');
+      return;
+    }
+    // Saved content was validated, but the rc file can be edited by hand: check it again.
+    const valid = validateMacroInput(macro.name, macro.content);
+    const refusal = valid.ok ? macroRunRefusal(controller) : `It is not valid: ${valid.error}`;
+    if (refusal) {
+      log.warn(`Macro "${macro.name}" not run: ${refusal}`);
+      say('WARN', `macro "${macro.name}" not run. ${refusal}`);
+      return;
+    }
+    const lines = macroLines(macro.content);
+    log.info(`Running macro "${macro.name}" (${lines.length} line${lines.length === 1 ? '' : 's'})`);
+    say('INFO', `running macro "${macro.name}" (${lines.length} line${lines.length === 1 ? '' : 's'})`);
+    // Exactly the `gcode` command below; only the caller's console tag is taken from the socket.
+    const sender = (context as WriteContext | undefined)?.__sender__;
+    controller.commands.gcode(macro.content, typeof sender === 'string' ? { __sender__: sender } : {});
+  },
 });

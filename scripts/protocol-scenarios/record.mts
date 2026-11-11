@@ -814,6 +814,54 @@ const SCENARIOS: Record<string, Scenario> = {
       await s.waitIdle();
     },
   },
+
+  '11-macros': {
+    description: 'macros: create over HTTP, run refused during a job, run (a second run refused while it sends), run of a deleted macro refused',
+    async run(s) {
+      const content = ['G21 G91', 'G0 X5 Y5', '%step = 2.5', 'G0 X[step] Y[-step]', '$J=G91 G21 Z-1 F600', 'G90'].join('\n');
+      const macro = await s.http('POST', '/api/kinetiq/macros', { name: 'Protocol macro', content });
+      const id = String(macro.id);
+      const list = (await s.http('GET', '/api/kinetiq/macros')) as unknown as { id: string }[];
+      if (!Array.isArray(list) || list.length !== 1 || list[0].id !== id) throw new Error('macro list does not hold the new macro');
+      // MacrosWidget Run → client.ts runMacro(id): only the id goes over the socket.
+      const run = () => s.command('macro:run', id, { __sender__: CLIENT_ID });
+      const refused = (why: string) => s.nextRead((l) => l.startsWith('[MSG:WARN: Kinetiq: macro') && l.includes(why), 5000, `macro refused: ${why}`);
+
+      // Refused while a job is paused at M0 (nothing reaches the port), then the job is stopped.
+      await s.load('job-m0-m6.nc', fixture('job-m0-m6.nc'));
+      s.command('gcode:start');
+      await s.waitWorkflow('running');
+      await s.waitWorkflow('paused');
+      await s.trace.waitFor((t) => t.startsWith('M0'), 10000, 'M0 line');
+      await s.waitIdle();
+      let refusal = refused('A job is running or paused');
+      run();
+      await refusal;
+      await stopJob(s);
+      await s.waitWorkflow('idle');
+      await s.waitIdle();
+
+      // Run: the lines go out one at a time through the Feeder ([step] evaluated, $J= through
+      // TravelGuard, off here). A second Run clicked at once is refused: the first is still sending.
+      const started = s.nextRead((l) => l.startsWith('[MSG:INFO: Kinetiq: running macro'), 5000, 'macro started');
+      refusal = refused('Earlier commands are still being sent');
+      run();
+      run();
+      await started;
+      await refusal;
+      await s.trace.waitFor((t) => t === 'G90', 15000, 'last macro line');
+      await s.waitIdle();
+
+      // Deleted (e.g. in another tab): refused by id.
+      const del = await fetch(`${s.base}/api/kinetiq/macros/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${s.token}` } });
+      s.log('http', 'DELETE', `/api/kinetiq/macros/${id}`, del.status);
+      if (del.status !== 204) throw new Error(`DELETE macro → ${del.status}`);
+      refusal = refused('no longer exists');
+      run();
+      await refusal;
+      await sleep(500);
+    },
+  },
 };
 
 /* ------------------------------------------------------------------------------------------------

@@ -294,6 +294,39 @@ interface JobRun { status: 'completed' | 'cancelled' | 'error'; startedAt: numbe
 
 `/api/kinetiq/machine-config` (read, save, restart, backups) for the FluidNC config editor. Same auth as §7.4. Endpoints, payloads and errors are in `SETTINGS_EDITOR.md` §3.4.
 
+### 7.6 Macros (Kinetiq HTTP API `src/server/macros.ts`, command `macro:run`) **[Kinetiq-defined]**
+
+Named G-code snippets (Macros widget, `ARCHITECTURE.md` §10.10). Stored in the rc file under **`kinetiq.macros`**, the only key this API writes.
+
+| Request | Response | Notes |
+|---|---|---|
+| `GET /api/kinetiq/macros` | `Macro[]`, in creation order | Malformed hand-edited entries are skipped |
+| `POST /api/kinetiq/macros` (body `{ name, content }`) | `201 Macro` | id and mtime set by the server |
+| `PUT /api/kinetiq/macros/<id>` (body `{ name, content }`) | `200 Macro` | Replaces name and content |
+| `DELETE /api/kinetiq/macros/<id>` | `204` | |
+
+```ts
+interface Macro { id: string /* 16 hex */; name: string; content: string /* lines joined by \n */; mtime: number /* epoch ms */ }
+```
+
+- **Auth:** same as §7.4 (loopback `Host` and `Authorization: Bearer <session JWT>`), else `403 { error: 'forbidden' }`.
+- **Validation** (`src/lib/macros/macro.ts`, shared with the UI): only `name` and `content` are read, every other field is dropped. Name trimmed, 1–60 characters, no control characters. Content: `\r\n` → `\n`, trailing spaces and blank lines removed; at least one non-blank line; ≤ 10,000 characters; printable ASCII plus tab only (anything else would reach the port as UTF-8 bytes 0x80–0xFF, which GRBL reads as real-time commands); no `%wait` line (in a manual line it holds the job Sender, CNCjs quirk); no M0/M1/M6 (they hold the Feeder, which only Reset releases). Names are unique, case-insensitive. At most 50 macros. Body ≤ 32 KB.
+- **Errors** (`{ error: string }`): `400` invalid JSON, not an object, or a validation failure (the message names the rule and the line); `404` unknown or malformed id; `405` other methods; `409` duplicate name or 50 macros already; `413` body over 32 KB (connection closed); `500` the rc file could not be parsed (nothing written).
+
+**Running a macro:** `command(port, 'macro:run', id, { __sender__: clientId })`. The browser never sends the content. The backend (`controller/commands.ts`) looks the id up, validates the stored content again (the rc file can be edited by hand), checks that the macro may run now, then calls the `gcode` command handler with the content (split on newlines, blanks dropped, one line in flight, feeder filter with `[expr]` / `%var=` sharing one context for the whole macro, TravelGuard on every `$J=`, dropped in Alarm). Only `context.__sender__` is passed on, so the console marks the lines as this tab's. Refusals send nothing to the port and emit one `serialport:read` line to the attached sockets, in the form TravelGuard uses:
+
+| Condition (checked in this order) | Console line |
+|---|---|
+| Unknown id | `[MSG:WARN: Kinetiq: macro not run. It no longer exists: reopen the Macros widget to refresh the list]` |
+| Stored content invalid | `[MSG:WARN: Kinetiq: macro "<name>" not run. It is not valid: <rule>]` |
+| Workflow not idle | `… not run. A job is running or paused]` |
+| Exclusive serial use or a settings exchange in progress | `… not run. A settings operation is using the serial port]` |
+| Feeder held (M0/M1/M6) | `… not run. Earlier commands are held (M0/M1/M6): Reset clears them]` |
+| Feeder lines queued or in flight | `… not run. Earlier commands are still being sent: wait for them to finish]` |
+| No status yet / Alarm / not Idle | `… Waiting for controller status]` / `… Alarm: use Home or Unlock first]` / `… Machine is <state>: wait until it is Idle]` |
+
+An accepted run first emits `[MSG:INFO: Kinetiq: running macro "<name>" (n lines)]`. The UI's Probe Z / height-map flags are browser state, so the backend cannot see them between two probe steps; the UI gate (`derive.macroView`) covers that. Note the Feeder's `pending` flag clears when its last line is sent, before that line's `ok`; a run accepted in that window queues behind it (the same as two jogs). **Stopping:** Hold, then Reset (top bar); Reset clears the queued lines (`feeder.reset()`).
+
 ---
 
 ## 8. Coordinates interface (Widget 3)
@@ -365,4 +398,4 @@ Observed on FluidNC v4.0.1: feed hold (`!`) on an **idle** machine puts FluidNC 
 
 Still in the backend but unused: the `write` event. Not carried over: the CNCjs REST API.
 
-Removed from the embedded backend: `tool:change` and `lasertest:*` (2026-11-08); `macro:run`, `macro:load`, `watchdir:load`, `autolevel:*` (6), `rapidOverride`, `sleep`, `statusreport`, `feeder:feed`, `feeder:start`, `feeder:stop` and the `start`/`stop`/`pause`/`resume` aliases (rewrite phase 1, 2026-11-09). The authoritative command list is `ControllerCommands` in `src/server/protocol.ts`.
+Removed from the embedded backend: `tool:change` and `lasertest:*` (2026-11-08); CNCjs's `macro:run` and `macro:load` (macros stored in the rc `macros` list), `watchdir:load`, `autolevel:*` (6), `rapidOverride`, `sleep`, `statusreport`, `feeder:feed`, `feeder:start`, `feeder:stop` and the `start`/`stop`/`pause`/`resume` aliases (rewrite phase 1, 2026-11-09). Kinetiq's own `macro:run` (by id, macros in `kinetiq.macros`, §7.6) was added on 2026-11-11; `macro:load` (loading a macro as a program) was not brought back. The authoritative command list is `ControllerCommands` in `src/server/protocol.ts`.

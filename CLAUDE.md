@@ -29,7 +29,7 @@ Environment variables: `KINETIQ_PORT`/`KINETIQ_HOST`, `KINETIQ_RC` (default `~/.
 
 ## Architecture
 
-**One process.** `server.ts` creates the `http.Server`. It routes `/api/kinetiq/{session,jobs,machine-config}` to handlers in `src/server/`, attaches the Socket.IO **4** `SocketEngine` (which answers `/socket.io/*`), and sends everything else to Next. `socket.io` and `socket.io-client` are upgraded together (same major), because the protocol is locked between them. Only the `Grbl` controller is registered.
+**One process.** `server.ts` creates the `http.Server`. It routes `/api/kinetiq/{session,jobs,machine-config,macros}` to handlers in `src/server/`, attaches the Socket.IO **4** `SocketEngine` (which answers `/socket.io/*`), and sends everything else to Next. `socket.io` and `socket.io-client` are upgraded together (same major), because the protocol is locked between them. Only the `Grbl` controller is registered.
 
 **Import boundary (safety-relevant):** nothing in `src/app`, `src/components` or `src/lib` may import `src/server/**`. This keeps serialport and the engine out of Next bundles and HMR, so there can never be two engines or two handles on the port. The `dev` script excludes the UI directories from tsx watch for the same reason. Code that both sides need goes in a pure, dependency-free module under `src/lib`; `src/lib/machine/travel.ts` is used by `TravelGuard` and `derive.ts`, for example. `src/server/protocol.ts` and `src/lib/cnc/protocol.ts` define the socket event and payload types on each side and must stay in sync.
 

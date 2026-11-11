@@ -22,8 +22,9 @@
  *     property). Only a rejected handshake carries a message: the client's `connect_error` Error.
  *   - Positions are decimal STRINGS exactly as the controller printed them ("12.500"), not numbers.
  *   - Phase 1 of BACKEND_REWRITE_PLAN.md removed the commands and events the UI never used
- *     (macros, watch directory, CNCjs autolevel, Grbl:* duplicates, command aliases, sleep,
+ *     (CNCjs macros, watch directory, CNCjs autolevel, Grbl:* duplicates, command aliases, sleep,
  *     rapid overrides, feeder:* and statusreport); they are no longer part of the protocol.
+ *     Kinetiq's own `macro:run` (by id, macros stored by src/server/macros.ts) was added later.
  */
 import type { MachineLimits } from '../lib/machine/travel';
 
@@ -432,6 +433,14 @@ export interface ControllerCommands {
   'travel:dismiss': [];
   /** Kinetiq: move the measured axis a few mm off its far switch, toward home. */
   'travel:backoff': [];
+  /**
+   * Kinetiq: run a saved macro (src/server/macros.ts) by id. The backend reads its content and
+   * queues the lines on the Feeder exactly like `gcode` (feeder filter, TravelGuard). Refused, with
+   * a `[MSG:WARN: Kinetiq: macro not run. …]` line on `serialport:read`, unless the macro exists
+   * and is valid, the port is not in exclusive use, the workflow is idle, the Feeder has nothing
+   * queued, in flight or held, and the controller is Idle. Only `context.__sender__` is kept.
+   */
+  'macro:run': [id: string, context?: WriteContext];
 }
 
 export type ControllerCommandName = keyof ControllerCommands;
@@ -457,6 +466,7 @@ export const CONTROLLER_COMMANDS = [
   'travel:apply',
   'travel:dismiss',
   'travel:backoff',
+  'macro:run',
 ] as const satisfies readonly ControllerCommandName[];
 
 // Compile-time check that both lists name every key (`satisfies` above rules out extra names).

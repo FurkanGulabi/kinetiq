@@ -44,6 +44,7 @@ The fake writes one record per received unit: `<ms since start>\t<record>`. A re
 | `08-settings-editor` | | Settings HTTP API: read, save an edited `config.yaml` (XModem upload in exclusive mode, swap, verify), restart (`$Bye`), read again to check the restart loaded it |
 | `09-leveling` | | Z probe (plate 0), the `leveling/run.ts` 3×3 probe grid over 20×20 mm, then `fixtures/job-level.nc` compensated with `compensate()` and run |
 | `10-travel-limits` | | Travel limits on (`KINETIQ_TRAVEL_LIMITS=on`, off in every other scenario): X jog blocked before homing, Z jog sent, Home, jogs inside, shortened to the limit and blocked at it, two queued jogs, a jog typed in the console. See docs/TRAVEL_LIMITS.md |
+| `11-macros` | | Macro API: create a 6-line macro over HTTP (with `%var=`, `[expr]` and a `$J=` line), `macro:run` while a job is paused at M0 (refused, nothing sent; job stopped), `macro:run` twice at once (first runs line by line, second refused: Feeder busy), delete it over HTTP, `macro:run` again (refused: unknown id). Added 2026-11-11 with its own baseline |
 
 ### Reproducible timing
 
@@ -68,4 +69,4 @@ The UI's sequencing code (`src/lib/cnc/client.ts`, `lineSequence.ts`, `probe.ts`
 - `record.mts`: the driver (run by `tsx`: `npm run protocol:record`)
 - `compare.mjs`: normalizer and diff (`npm run protocol:compare`)
 - `fixtures/`: the G-code programs the scenarios load
-- `baseline/`: traces recorded with the CNCjs JavaScript backend (2026-11-09)
+- `baseline/`: traces recorded with the CNCjs JavaScript backend (2026-11-09); later Kinetiq scenarios (`11-macros`) were recorded when they were added

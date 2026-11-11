@@ -4,13 +4,14 @@
  *
  * GET /api/kinetiq/session → { token }
  *
- * Mints the JWT that the SocketEngine Socket.IO handshake requires (socketio-jwt, handshake: true).
+ * Mints the JWT that the SocketEngine Socket.IO handshake requires (sent by the client as
+ * `auth: { token }`, checked by authenticateSocketToken() below).
  * Same token format as CNCjs `api.users.signin` with no users configured: { id: '', name: '' }.
  * Served by the custom server itself because it must share the engine's `settings.secret`.
  *
- * Also holds the handshake's second step, authorizeIPAddress() / validateUser() (was
+ * Also holds the rest of the handshake checks, authorizeIPAddress() / validateUser() (was
  * src/server/cnc/access-control.js, CNCjs 1.11.5; ported unchanged in rewrite phase 5), which
- * engine/SocketEngine.ts runs after socketio-jwt has verified the token.
+ * engine/SocketEngine.ts runs after authenticateSocketToken() has verified the token.
  *
  * SERVER-ONLY. See docs/BACKEND_INTEGRATION.md §4.1.
  */
@@ -24,6 +25,17 @@ import ensureArray from './util/ensureArray';
 import type { CNCSettings } from './backend';
 
 export const SESSION_PATH = '/api/kinetiq/session';
+
+/**
+ * Kinetiq: the only JWT algorithm the session token is signed and verified with. Pinned on both
+ * sides so a token with another `alg` header (e.g. `none`) is never accepted.
+ */
+const SESSION_JWT_ALGORITHM = 'HS256' as const;
+
+/** Verifies a session token against `secret`; returns its payload or throws jsonwebtoken's error. */
+export function verifySessionToken(token: string, secret: string): string | jwt.JwtPayload {
+  return jwt.verify(token, secret, { algorithms: [SESSION_JWT_ALGORITHM] });
+}
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
@@ -49,6 +61,7 @@ export function handleSession(req: http.IncomingMessage, res: http.ServerRespons
   }
 
   const token = jwt.sign({ id: '', name: '' }, settings.secret, {
+    algorithm: SESSION_JWT_ALGORITHM,
     expiresIn: settings.accessTokenLifetime as jwt.SignOptions['expiresIn'],
   });
 
@@ -67,7 +80,7 @@ export function isAuthorized(req: http.IncomingMessage, settings: CNCSettings): 
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   try {
-    jwt.verify(token, settings.secret);
+    verifySessionToken(token, settings.secret);
     return true;
   } catch {
     return false;
@@ -100,11 +113,48 @@ const whitelist = [
   'fe80::/10' // Link-local address
 ];
 
-/** The decoded session token (`socket.decoded_token`); `{}` when absent. Only id and name are read. */
+/** The decoded session token (`socket.data.user`); `{}` when absent. Only id and name are read. */
 export interface SessionUser {
   id?: unknown;
   name?: unknown;
   [key: string]: unknown;
+}
+
+/**
+ * The `data` of the Error a token rejection carries to the client (`connect_error` → `err.data`).
+ * Same `code`/`type` values socketio-jwt used, so the client can tell an auth failure apart from
+ * the IP and user checks and refetch the token once.
+ */
+export interface SocketAuthErrorData {
+  type: 'UnauthorizedError';
+  code: 'credentials_required' | 'invalid_token';
+}
+
+/**
+ * Kinetiq: the handshake's first step (replaces socketio-jwt, which does not support Socket.IO 4).
+ * Verifies the session token from `socket.handshake.auth.token` against `settings.secret` and
+ * returns its payload; throws an Error (with SocketAuthErrorData as `data`) for a missing, expired,
+ * malformed or wrongly signed token.
+ */
+export function authenticateSocketToken(token: unknown): SessionUser {
+  const reject = (code: SocketAuthErrorData['code'], message: string): never => {
+    const err = new Error(message) as Error & { data: SocketAuthErrorData };
+    err.data = { type: 'UnauthorizedError', code };
+    throw err;
+  };
+
+  if (typeof token !== 'string' || !token) {
+    return reject('credentials_required', 'No session token provided');
+  }
+  let decoded: string | jwt.JwtPayload;
+  try {
+    decoded = verifySessionToken(token, settings.secret);
+  } catch (err) {
+    // jsonwebtoken's message, e.g. "jwt expired", "invalid signature", "jwt malformed".
+    return reject('invalid_token', `Invalid session token: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // Kinetiq only signs object payloads; a string payload carries no id/name.
+  return typeof decoded === 'object' && decoded !== null ? (decoded as SessionUser) : {};
 }
 
 /** Resolves if the address is in `whitelist` (or remote access is allowed), else rejects. */

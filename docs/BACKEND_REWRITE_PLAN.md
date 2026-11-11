@@ -117,7 +117,7 @@ src/server/
 | 4 | Split the controller | `GrblController` → coordinator + `StatusPoller` + `JobRunner` + `commands`. Done in 2–3 commits, protocol diff after each. | **high** |
 | 5 | Engine + entry | `CNCEngine` → `SocketEngine`, auth into `session.ts`, typed `backend.ts`; `src/lib/cnc` imports `protocol.ts`; remove `allowJs`. | medium |
 | 6 | Hardware + docs | Short session on the machine (connect, jog, a real job with hold/resume/stop, probe, settings save); final pass over `ARCHITECTURE.md`, `BACKEND_INTEGRATION.md` (structure and provenance were updated in phase 5); merge to `main`. | — |
-| later | socket.io 4 | Server + client together, own branch. | medium |
+| later | socket.io 4 | Server + client together, own branch. **Done (2026-11-11):** `socket.io`/`socket.io-client` 4.8, `socketio-jwt` replaced by `authenticateSocketToken()` (session.ts), token in `auth`; serial traffic unchanged. | medium |
 
 ## 7. Decisions (2026-11-09)
 

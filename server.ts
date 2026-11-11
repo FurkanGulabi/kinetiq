@@ -5,7 +5,7 @@
  *    ├── GET /api/kinetiq/session → JWT for the Socket.IO handshake
  *    ├── /api/kinetiq/jobs/*     → job library (uploaded G-code + recent runs)
  *    ├── /api/kinetiq/machine-config → FluidNC config read (settings editor)
- *    ├── /socket.io/*            → SocketEngine (src/server/engine, Socket.IO 2.2)
+ *    ├── /socket.io/*            → SocketEngine (src/server/engine, Socket.IO 4)
  *    └── everything else         → Next.js
  *
  * See docs/BACKEND_INTEGRATION.md §5 for the boot order and shutdown behaviour.

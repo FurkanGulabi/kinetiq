@@ -24,7 +24,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import io from 'socket.io-client';
+import { io } from 'socket.io-client';
 import { goToZeroLines, jogLine, WCS_P } from '../../src/lib/cnc/commands.ts';
 import { compensate } from '../../src/lib/leveling/compensate.ts';
 import { gridAxis, probeOrder, type HeightMap } from '../../src/lib/leveling/heightmap.ts';
@@ -248,8 +248,8 @@ class Session {
     if (!res.ok) throw new Error(`session request failed (${res.status})`);
     this.token = ((await res.json()) as { token: string }).token;
 
-    // Same options as client.ts startClient().
-    this.socket = io(this.base, { path: '/socket.io', query: `token=${this.token}`, reconnection: false });
+    // Same path and token handshake as client.ts startClient() (`auth: { token }`), without reconnection.
+    this.socket = io(this.base, { path: '/socket.io', auth: { token: this.token }, reconnection: false });
     const s = this.socket;
     s.on('workflow:state', (w: string) => {
       this.workflow = w;
@@ -280,8 +280,7 @@ class Session {
     // startup → list → open (client.ts: 'startup' handler, listPorts, openPort).
     const ports = await new Promise<{ port: string }[]>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('no startup / serialport:list from the server')), 15000);
-      s.on('connect_error', (e: Error) => reject(e));
-      s.on('error', (e: unknown) => reject(new Error(String(e))));
+      s.on('connect_error', (e: Error) => reject(e)); // also a rejected handshake (Socket.IO 4)
       s.once('startup', () => s.emit('list'));
       s.once('serialport:list', (list: { port: string }[]) => {
         clearTimeout(timer);

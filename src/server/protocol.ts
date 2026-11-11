@@ -17,8 +17,9 @@
  * constants only. No Node imports, no runtime dependencies.
  *
  * Wire notes that apply throughout:
- *   - Socket.IO 2 serialises payloads as JSON. `undefined` properties are dropped, functions vanish,
- *     and an `Error` object arrives as `{}` (its `message` is not an own enumerable property).
+ *   - Socket.IO serialises payloads as JSON (v4 as v2 did). `undefined` properties are dropped,
+ *     functions vanish, and an `Error` object arrives as `{}` (its `message` is not an own enumerable
+ *     property). Only a rejected handshake carries a message: the client's `connect_error` Error.
  *   - Positions are decimal STRINGS exactly as the controller printed them ("12.500"), not numbers.
  *   - Phase 1 of BACKEND_REWRITE_PLAN.md removed the commands and events the UI never used
  *     (macros, watch directory, CNCjs autolevel, Grbl:* duplicates, command aliases, sleep,

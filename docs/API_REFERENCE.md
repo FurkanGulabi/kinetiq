@@ -12,9 +12,9 @@ Every event, payload and command below was read in source. Anything Kinetiq **de
 
 | Item | Value | Source |
 |---|---|---|
-| Protocol | Socket.IO **2.2** server (Engine.IO 3). The client must be `socket.io-client@2.x`. | `package.json`, `CNCEngine.js:142` |
-| Path | `/socket.io` | `CNCEngine.js:144` |
-| Auth | JWT in the handshake query: `io(url, { query: 'token=' + token })` | `CNCEngine.js:147-150`, `app/index.jsx:122` |
+| Protocol | Socket.IO **4** server (Engine.IO 6, protocol v4). The client must be `socket.io-client@4.x`; v2/v3 clients are refused (`allowEIO3` is off). Same-origin only (no `cors` option); `/socket.io/socket.io.js` is not served. **[Kinetiq: migrated from Socket.IO 2.2]** | `package.json`, `src/server/engine/SocketEngine.ts` |
+| Path | `/socket.io` | `src/server/engine/SocketEngine.ts` |
+| Auth | JWT in the handshake `auth` payload: `io({ path: '/socket.io', auth: { token } })` (Kinetiq's client uses the function form, `auth: (cb) => cb({ token })`, so a refreshed token is sent on reconnect). Verified with `jsonwebtoken`, **HS256 only**, against `settings.secret`; then the IP policy, then the user check. A rejected handshake never reaches `connection`: the client gets `connect_error` with an `Error` whose `message` says why and, for a token failure, `data: { type: 'UnauthorizedError', code: 'credentials_required' \| 'invalid_token' }`. Socket.IO 4 does not retry a rejected handshake by itself. **[Kinetiq: replaces `socketio-jwt` and the `?token=` query]** | `src/server/session.ts` (`authenticateSocketToken`), `SocketEngine.ts` |
 | Token | `jwt.sign({ id, name }, settings.secret, { expiresIn: settings.accessTokenLifetime /* '30d' */ })`. With no users configured, `{ id: '', name: '' }` is valid. | `api/api.users.js:27-33, 74-83` |
 | IP policy | Loopback and private ranges are allowed unless `allowRemoteAccess` is set | `access-control.js:7-37` |
 | Kinetiq token endpoint | `GET /api/kinetiq/session` → `200 { token: string }`. Served by Kinetiq's custom server. **[Kinetiq-defined]**, see `BACKEND_INTEGRATION.md` §4.1 | — |
@@ -58,7 +58,7 @@ interface OpenOptions {
 | `serialport:open` | `{ port, baudrate, controllerType: 'Grbl', inuse: true }` | The port opened successfully, **or** a socket attached to an already-open port | attached sockets | `GrblController.js:1221-1226, 1310-1317` |
 | `serialport:change` | `{ port, inuse: boolean }` | The port opened or closed | **all** sockets | `GrblController.js:1229-1234, 1274-1279` |
 | `serialport:close` | `{ port, inuse: false }` | Close was requested **or** the connection was lost (USB unplugged, device reset) | attached sockets | `GrblController.js:1268-1271`, `:82-96` |
-| `serialport:error` | `{ err: object, port }` | The port failed to open. `err` is an `Error` and probably serialises to `{}` **[runtime check]**. | attached sockets | `GrblController.js:1189-1193` |
+| `serialport:error` | `{ err: object, port }` | The port failed to open. `err` is an `Error` and serialises to `{}` (confirmed on Socket.IO 2 and 4; the reason is only in the server log). | attached sockets | `GrblController.js:1189-1193` |
 | `serialport:read` | `line: string` | Every controller line forwarded to the user (see §5.2) | attached sockets | many sites in `GrblController.js:542-858` |
 | `serialport:write` | `data: string, context: { source: 'client' \| 'feeder', ...callerContext }` | Bytes written by `write`/`writeln` (`source:'client'`) or by the Feeder (`source:'feeder'`). **Program lines from the Sender and the `?`/`$G` polls are not emitted.** | attached sockets | `GrblController.js:354-357, 1985-1988` |
 | `controller:state` | `type: 'Grbl', state: GrblState` | Every 250 ms tick in which the runner state object changed | attached sockets | `GrblController.js:973-977, 1323-1327` |

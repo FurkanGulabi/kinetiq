@@ -38,7 +38,7 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 | Framework | **Next.js 16** (App Router) + **React 19** + **TypeScript** | As required |
 | Process host | **Next.js custom server** (`server.ts`) | Hosts the backend's Socket.IO engine on the same `http.Server` (D1) |
 | Machine backend | **Built-in CNCjs GRBL backend**, carried over from CNCJS-fork and rewritten into TypeScript (`src/server/`) | Same logic as CNCjs, no external fork (D2, revised 2026-11-08; `BACKEND_REWRITE_PLAN.md`) |
-| Realtime client | **`socket.io-client@2.x`** | Protocol lock-step with the CNCjs Socket.IO 2.2 server (D3) |
+| Realtime client | **`socket.io-client@4.x`** | Protocol lock-step with the backend's Socket.IO 4 server (D3, revised: was 2.x with Socket.IO 2.2) |
 | Styling | **Tailwind CSS v4** with CSS-variable design tokens (`@theme`) | As required; tokens are defined once |
 | Primitives | **Radix UI**, only `@radix-ui/react-select` and `@radix-ui/react-dialog` | Accessible select and confirmation dialog without a full component library |
 | 3D view | **three.js** (plain, no React wrapper) | Live machine visualisation; imperative updates avoid React re-renders at 4 Hz |
@@ -77,7 +77,7 @@ kinetiq/
     │   ├── fluidnc/             /api/kinetiq/machine-config (settings editor): exchange.ts, xmodem.ts, machineConfig.ts
     │   │   — the CNCjs GRBL backend, rewritten into TypeScript (BACKEND_INTEGRATION.md §7) —
     │   ├── protocol.ts          socket event/command names + payload types, shared with src/lib/cnc
-    │   ├── engine/SocketEngine.ts  Socket.IO 2 server: handshake, list/open/close/command/write/writeln (was CNCEngine)
+    │   ├── engine/SocketEngine.ts  Socket.IO 4 server: handshake, list/open/close/command/write/writeln (was CNCEngine)
     │   ├── controller/          GrblController (coordinator, socket fan-out), StatusPoller, JobRunner, filters, commands
     │   ├── streaming/           Sender, Feeder, Workflow, MessageSlot, expressions ([expr] / %var=), builtins
     │   ├── serial/SerialConnection.ts  serialport v10 + ReadlineParser
@@ -86,8 +86,8 @@ kinetiq/
     │   ├── events/              EventTrigger, TaskRunner (rc `events` only; BACKEND_INTEGRATION.md §7.2)
     │   ├── store.ts, logger.ts, constants.ts, util/
     │   └── CNCJS_LICENSE        CNCjs MIT licence (provenance: BACKEND_INTEGRATION.md §7.1)
-    ├── types/                   socket.io-client.d.ts; server-only typings referenced by src/server
-    │                            (socket.io, range_check, spawn-default-shell, gcode-parser)
+    ├── types/                   server-only typings referenced by src/server
+    │                            (range_check, spawn-default-shell, gcode-parser); socket.io ships its own
     ├── app/
     │   ├── layout.tsx           <html>, fonts, metadata ("Kinetiq")
     │   ├── page.tsx             renders <Workspace/> (static shell)
@@ -131,7 +131,7 @@ kinetiq/
 | Unit | Responsibility | Talks to |
 |---|---|---|
 | `server.ts` | Boot order (`BACKEND_INTEGRATION.md` §5.1), routes `/api/kinetiq/{session,jobs,machine-config}`, shutdown | CNCjs modules, Next |
-| `lib/cnc/client.ts` | Owns the **only** socket. Fetches a token, connects with `query: 'token=…'`, and exposes typed emitters. Never decides policy. | Socket.IO |
+| `lib/cnc/client.ts` | Owns the **only** socket. Fetches a token, connects with `auth: { token }` (function form, so a reconnect sends the current token), refetches the token once if the handshake rejects it (`connect_error`), and exposes typed emitters. Never decides policy. | Socket.IO |
 | `lib/cnc/store.ts` | Reduces server events into one immutable `MachineState`. Holds client flags: `connection.phase === 'opening'`, `userRequestedClose`, `stopSequence`, `jobErrors`, `configBusy`, `probe`, `leveling`. | client |
 | `lib/cnc/derive.ts` | Pure functions from `MachineState` to UI state (connection, job, guards, times). **All gating rules live here.** | — |
 | `lib/ui/layout.ts` | Widget positions, collapsed state and stacking order; live widget rectangles for the 3D view's Fit | localStorage |
@@ -190,7 +190,7 @@ widget action ──▶ guard (derive.can*) ──▶ client.emit(...) ──▶
 
 - **No optimistic machine state.** Clicking Jog changes nothing in the store. The new position arrives through `controller:state` within about 250 ms.
 - **Attach on (re)connect.** After `startup`, emit `list`. If a port is `inuse`, emit `open(port, {baudrate: last or 115200})`. The backend attaches without reopening and replays the full state. The same path covers a page reload, a second tab, and backend reconnects.
-- **Socket loss.** `backend: 'offline'`, an alert card under the top bar reads "Connection to the Kinetiq server was lost — machine state unknown. Reconnecting…", and every machine control is disabled. Socket.IO reconnects on its own and the attach step runs again.
+- **Socket loss.** `backend: 'offline'`, an alert card under the top bar reads "Connection to the Kinetiq server was lost — machine state unknown. Reconnecting…", and every machine control is disabled. Socket.IO reconnects on its own and the attach step runs again (`connect` → `startup` → `list` → `open`). A handshake the server rejects is not retried by Socket.IO 4: an invalid or expired token is refetched once, after which the alert shows the server's reason.
 - **Token failure** (`connect_error` / `error` with an auth message): fetch a new token once, then report the error.
 
 ---

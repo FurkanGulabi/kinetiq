@@ -2,7 +2,7 @@
 
 **Project:** Kinetiq: Advanced Motion Control
 **Question:** How does Kinetiq reuse the CNCjs backend while staying a **single Next.js application**?
-**Answer (approved 2026-11-08):** Option B, an **embedded backend runtime through a Next.js custom server**. This is one Node.js process and one package. It hosts the Next.js request handler **and** the CNCjs `CNCEngine` (Socket.IO 2 + serialport) on the same `http.Server`. The CNCjs GRBL server code is embedded in `src/server/`, rewritten into TypeScript, with a few documented changes (D2 revised; §7.1).
+**Answer (approved 2026-11-08):** Option B, an **embedded backend runtime through a Next.js custom server**. This is one Node.js process and one package. It hosts the Next.js request handler **and** the CNCjs `CNCEngine` (Socket.IO, now 4, + serialport) on the same `http.Server`. The CNCjs GRBL server code is embedded in `src/server/`, rewritten into TypeScript, with a few documented changes (D2 revised; §7.1).
 
 > **Approved.** D1–D4 (§9) were approved on 2026-11-08. A custom server is an official Next.js feature, not a separate backend; it replaces `next start` with `node dist/server.js`.
 
@@ -16,7 +16,7 @@
 | 2 | Does CNCjs require an independent Node.js process? | **No.** `CNCEngine.start(server, controller)` accepts **any** `http.Server`. The CNCjs process boundary exists only because `server/index.js` creates its own Express server. | `CNCEngine.js:100-145`, `server/index.js:233-236` |
 | 3 | Can Next.js server-side code host the backend? | **Route Handlers and Server Actions: no.** They are request-scoped, may be re-evaluated on hot reload, and offer no `http.Server` to attach Socket.IO to. **Custom server: yes.** It owns the `http.Server` and the process lifetime. | Next.js custom server (`next({ dev })` + `app.getRequestHandler()`) |
 | 4 | Is serial port access compatible with the Next.js runtime? | **Yes in the Node runtime, no in the Edge runtime.** `serialport` v10 is a native addon (`@serialport/bindings-cpp`). It must be loaded by plain Node `require` from the custom server and **never** bundled by Next's webpack or Turbopack. Keeping all CNCjs code outside `src/app/` guarantees this. | `SerialConnection.js:1-3`, `CNCEngine.js:3` |
-| 5 | Can WebSockets and Socket.IO run reliably? | **Yes.** Socket.IO attaches to the custom server's `http.Server` at path `/socket.io`, which does not collide with Next routes. **Constraint:** the server is Socket.IO **2.2** (Engine.IO protocol 3), so the browser must use **`socket.io-client@2.x`**. v3 and v4 clients cannot talk to it. **Risk to confirm in M1:** Engine.IO 3 tears down other WebSocket upgrades that it has not answered within 1 s (`destroyUpgrade`). Next's dev HMR socket answers immediately, so it should be unaffected, but this must be observed. | `CNCEngine.js:142-145`, `package.json` (`socket.io ~2.2.0`) |
+| 5 | Can WebSockets and Socket.IO run reliably? | **Yes.** Socket.IO attaches to the custom server's `http.Server` at path `/socket.io`, which does not collide with Next routes. **Constraint (at the time):** the server was Socket.IO **2.2** (Engine.IO protocol 3), so the browser had to use **`socket.io-client@2.x`**. *Since 2026-11-11 both sides are on Socket.IO 4 (server and client together); see D3.* **Risk to confirm in M1:** Engine.IO 3 tears down other WebSocket upgrades that it has not answered within 1 s (`destroyUpgrade`). Next's dev HMR socket answers immediately, so it should be unaffected, but this must be observed. | `CNCEngine.js:142-145`, `package.json` (`socket.io ~2.2.0`) |
 | 6 | Can the app keep a persistent serial connection? | **Yes.** The engine lives in the custom server module, outside Next's module graph and HMR, so the serial port stays open across frontend reloads and page navigations. Browser tabs can close and reopen without touching the port, because CNCEngine keeps controllers in a process-wide store. | `store/index.js`, `CNCEngine.js:186-200, 266-273` |
 | 7 | Do job streaming and buffer management stay reliable? | **Yes, unchanged.** Streaming runs entirely inside `GrblController`, `Sender` and the serialport event loop in Node. The browser only sends `gcode:start/pause/resume/stop` and never streams lines. One caveat: heavy server-side rendering work runs on the same event loop. For Kinetiq (one page, local, mostly client-rendered) the load is negligible, and Next can be kept off the hot path by rendering the page statically. | `Sender.js`, `GrblController.js:366-496` |
 | 8 | Do Next.js dev or prod environments cause lifecycle problems? | **Manageable, with rules.** (a) Never import CNCjs from `src/app/**`; otherwise HMR could create a second engine and a second handle on the port. (b) Changes to the custom server need a process restart, which closes the port. That is acceptable and intended. (c) `output: 'standalone'` does not trace a custom server, so production runs `next build` followed by `node dist/server.js`. (d) CNCjs installs no SIGINT/SIGTERM handler; Kinetiq should add one (§5.3). | — |
@@ -78,19 +78,19 @@ Kinetiq instantiates the `CNCEngine` class itself rather than using the `cncengi
 │   ├── GET /api/kinetiq/session  ── handled by server.ts → { token } (JWT signed w/ settings.secret)│
 │   ├── /api/kinetiq/jobs/*       ── job library (src/server/jobs.ts)                               │
 │   ├── /api/kinetiq/machine-config/* ── FluidNC config editor (src/server/fluidnc/)                │
-│   ├── /socket.io/*              ── SocketEngine, was CNCEngine (Socket.IO 2.2, JWT handshake)     │
+│   ├── /socket.io/*              ── SocketEngine, was CNCEngine (Socket.IO 4, JWT handshake)       │
 │   │                                   └── GrblController ── Sender/Feeder/Workflow ── serialport ──┼──USB──▶ FluidNC (ESP32)
 │   └── everything else           ── Next.js request handler (App Router, single page)              │
 │                                                                                                   │
 └───────────────────────────────────────────────────────────────────────────────────────────────────┘
         ▲                                  ▲
-        │ HTTP (page, assets, Kinetiq APIs)│ WebSocket (socket.io-client@2)
+        │ HTTP (page, assets, Kinetiq APIs)│ WebSocket (socket.io-client@4)
         └──────────────── Browser: Kinetiq UI (React client components) ──────────────┘
 ```
 
 ### 4.1 Session token
 
-The engine (`src/server/engine/SocketEngine.ts`, was CNCjs's `CNCEngine`) requires `?token=<JWT>` at handshake (`socketio-jwt`, `handshake: true`). The token is a JWT signed with `settings.secret`, the same secret the CNCjs bootstrap generates and stores in the rc file. The payload is `{ id, name }`; with no users configured, `{ id: '', name: '' }` is accepted (`api.users.js:74-83`; `validateUser()` in `src/server/session.ts`, was `access-control.js:39-57`). After the token, `authorizeIPAddress()` (same file) rejects addresses outside the loopback and private ranges.
+The engine (`src/server/engine/SocketEngine.ts`, was CNCjs's `CNCEngine`) requires the JWT in the handshake's `auth` payload (`auth: { token }`; checked by `authenticateSocketToken()` in `src/server/session.ts`, HS256 only; this replaced `socketio-jwt` and its `?token=` query when the engine moved to Socket.IO 4). The token is a JWT signed with `settings.secret`, the same secret the CNCjs bootstrap generates and stores in the rc file. The payload is `{ id, name }`; with no users configured, `{ id: '', name: '' }` is accepted (`api.users.js:74-83`; `validateUser()` in `src/server/session.ts`, was `access-control.js:39-57`). After the token, `authorizeIPAddress()` (same file) rejects addresses outside the loopback and private ranges.
 
 Kinetiq's custom server handles `GET /api/kinetiq/session` itself (plus the job library and machine-config APIs, which require this token as `Authorization: Bearer`), before delegating to Next. It returns a token signed with `jsonwebtoken`, which is already a CNCjs dependency. Next Route Handlers are avoided here because they run in Next's bundled module graph and would not share the engine's `settings` singleton.
 
@@ -172,7 +172,7 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 - `src/server/fluidnc/`: the FluidNC config editor API (`SETTINGS_EDITOR.md` §3). It sends `$` commands through `controller.writeln()` one at a time and, for saving, an XModem transfer on the raw port while the controller is in exclusive mode.
 - The GRBL backend itself (D2, revised), CNCjs 1.11.5 rewritten into TypeScript (§7.1):
   - `src/server/protocol.ts`: socket event and command names and payload types, shared with `src/lib/cnc`.
-  - `src/server/engine/SocketEngine.ts`: the Socket.IO 2 server (handshake, `list`/`open`/`close`/`command`/`write`/`writeln`, `startup`, the rc-ports fallback of `list`).
+  - `src/server/engine/SocketEngine.ts`: the Socket.IO 4 server (handshake, `list`/`open`/`close`/`command`/`write`/`writeln`, `startup`, the rc-ports fallback of `list`).
   - `src/server/controller/`: `GrblController` (coordinator, socket fan-out), `StatusPoller`, `JobRunner`, `filters`, `commands`.
   - `src/server/streaming/`: `Sender` (character counting), `Feeder`, `Workflow`, the `[expr]` / `%var=` macro language (`expressions.ts`) and `%wait` / `%msg` / M0 / M6 helpers (`builtins.ts`).
   - `src/server/serial/SerialConnection.ts`, `src/server/grbl/` (constants, line parsers, `GrblRunner`).
@@ -208,12 +208,12 @@ The same rule is in the headers of `TaskRunner.ts`, `EventTrigger.ts` and `confi
 | # | Item | Impact | Plan |
 |---|---|---|---|
 | U1 | Engine.IO 3 `destroyUpgrade` alongside Next dev HMR | **Resolved (M1, 2026-11-08).** With `next({ httpServer })`, `[HMR] connected` and live component edits work next to Socket.IO; the serial engine is not restarted. | — |
-| U2 | Open-error reason not transmitted (hazard H4) | **Confirmed (M1).** The `open` callback and `serialport:error.err` both arrive as `{}`. The reason (e.g. "No such file or directory") only appears in the server log. | The UI shows "Could not open *port*" plus the likely causes. |
+| U2 | Open-error reason not transmitted (hazard H4) | **Confirmed (M1), unchanged on Socket.IO 4 (2026-11-11).** The `open`/`close` callbacks and `serialport:error.err` all arrive as `{}`. The reason (e.g. "No such file or directory") only appears in the server log. | The UI shows "Could not open *port*" plus the likely causes. |
 | U8 | Non-numeric `baudrate` in `open` | **Observed (M1).** `SerialConnection` throws an uncaught `TypeError`. Next's handler keeps the process alive in dev and prod, but the `open` callback never fires. | Kinetiq validates the baud rate on the client before emitting (`client.ts`). |
 | U9 | No banner on connect (F1/F3) | The Connection widget cannot show the firmware until a `$I` reply passes through | **Decision pending:** have Kinetiq send a read-only `$I` once when the controller is ready, or leave identification to the console. |
 | U10 | Dev-only: hot reload of `src/lib/cnc/client.ts` resets its module state while the page keeps the old socket, so actions silently do nothing until a page reload (observed in M1) | Development only | Reload the page after editing `client.ts`, or keep the socket on `globalThis` in dev. |
 | U3 | FluidNC hardware checks | F1, F2, F3, F4, F6, F7 and F15 were **observed on 2026-11-08** with FluidNC v4.0.1. F9 and F10 are partly observed (relative jogging, hold/resume/reset, feed override); absolute jog and `0x85` remain. | — |
-| U4 | Socket.IO 2.2 and Engine.IO 3 are old and carry published advisories (for example permissive default CORS before socket.io 2.4) | Local-only deployment limits exposure. The JWT handshake still applies. | Bind to loopback and add the Host-header check. Upgrading belongs in the fork, not in Kinetiq. |
+| U4 | Socket.IO 2.2 and Engine.IO 3 are old and carry published advisories (for example permissive default CORS before socket.io 2.4) | **Resolved (2026-11-11).** Server and client moved to Socket.IO 4 (no CORS by default, `allowEIO3` off, client script not served). | Loopback bind and the Host-header check stay. |
 | U5 | `CNCJS-fork` must be built before Kinetiq can run | **Resolved (2026-11-08):** the backend is embedded in `src/server/` (D2 revised; first as JavaScript in `src/server/cnc`, now TypeScript); `npm install` is the only setup step. | — |
 | U6 | `ignoreErrors` key mismatch (`state.controller.exception.ignoreErrors` vs the default `controller.exception.ignoreErrors`) | None (the safe default holds) | Leave as is. Kinetiq never sets either key. |
 | U7 | `remainingTime` is a line-count extrapolation | Inaccurate on uneven programs | **Resolved (2026-11-10):** the Job widget computes its own estimate from the toolpath, feeds and `$110`–`$122`, calibrated against the run (`API_REFERENCE.md` §7.3). `remainingTime` is only the fallback. |
@@ -226,5 +226,5 @@ The same rule is in the headers of `TaskRunner.ts`, `EventTrigger.ts` and `confi
 |---|---|---|
 | **D1** | Use a Next.js **custom server** (`node dist/server.js`) to host CNCEngine in the same process | **Approve.** It is the only single-application design that keeps CNCjs unmodified and safe. |
 | **D2** | Consume CNCjs as a **fork build** (`file:../CNCJS-fork/dist/cncjs`, way B1) | Approve B1. B2 is the fallback. **Revised 2026-11-08:** the CNCjs GRBL server code now lives in `src/server/` (rewritten into TypeScript, §7.1) and Kinetiq no longer depends on `CNCJS-fork`. |
-| **D3** | Pin **`socket.io-client@2.x`** in the frontend (protocol lock-step with the CNCjs server) | Approve. It is required. |
+| **D3** | Pin **`socket.io-client@2.x`** in the frontend (protocol lock-step with the CNCjs server) | Approved; **revised 2026-11-11:** server and client moved to Socket.IO 4 together, so the client is `socket.io-client@4.x`. The lock-step rule stays: upgrade both sides at once. |
 | **D4** | Minimal job and safety controls beyond pure monitoring: Load file (single file picker, not a file manager), Start/Pause/Resume/Stop in the Job widget, plus a persistent **Feed Hold** and **Reset** in the top bar | Approve. Without these a job cannot run, and a hold/reset control should always be reachable. Unlock (`$X`) and Home (`$H`) were later added as buttons at the user's request (2026-11-08). |

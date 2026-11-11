@@ -11,7 +11,7 @@
  *                            modal state, tool, parameters, bounding box, `global`, GLOBAL_OBJECTS)
  *
  * Ported line by line: what a filter returns is exactly what reaches the serial port.
- * Known quirks kept as they are (docs/BACKEND_REWRITE_PLAN.md §3a):
+ * Known quirks kept as they are (docs/BACKEND_INTEGRATION.md §7.3):
  *   - bug 3: `%wait` typed in the console holds the Sender, not the Feeder.
  *   - bug 6: the Sender runs its dataFilter a second time on a line that did not fit in the RX
  *     buffer, so everything below can run twice for one program line.
@@ -202,7 +202,7 @@ export const createFeederDataFilter = (controller: GrblController): FeederDataFi
     // %wait
     if (command === BUILTIN_COMMAND_WAIT) {
       log.debug(`${command}: line=${x(originalLine)}`);
-      // CNCjs quirk (plan §3a bug 3, kept): a console `%wait` holds the Sender, not the Feeder.
+      // CNCjs quirk (BACKEND_INTEGRATION.md §7.3 bug 3, kept): a console `%wait` holds the Sender, not the Feeder.
       senderOf(controller).hold({
         data: BUILTIN_COMMAND_WAIT,
         msg: messageSlotOf(controller).take() ?? originalLine,

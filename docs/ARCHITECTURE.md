@@ -2,7 +2,7 @@
 
 **Kinetiq: Advanced Motion Control.** A modern, minimal and reliable control interface for GRBL-compatible CNC machines. The initial target is FluidNC on an ESP32-WROOM-32U driving NEMA 23 steppers through TB6600 drivers.
 
-**Status:** Decisions D1–D4 approved 2026-11-08 (`BACKEND_INTEGRATION.md` §9). Milestones M1–M5b and the M3 console are implemented, plus Probe Z, bed leveling and the machine settings editor (`IMPLEMENTATION_PLAN.md`).
+**Status:** Decisions D1–D4 approved 2026-11-08 (`BACKEND_INTEGRATION.md` §9). Milestones M1–M5b are implemented (M1 connection, M2 workspace layout and design system, M3 console, M4 coordinates and jog, M5 job status and controls, M5b toolpath in the 3D view), plus Probe Z, bed leveling, the machine settings editor, travel limits and macros.
 
 ---
 
@@ -16,18 +16,15 @@
 
 ---
 
-## 2. Claude Code skills: discovered and used
+## 2. Design guidance
 
-| Skill | Source | Used? | Responsibility in Kinetiq |
-|---|---|---|---|
-| **graphify** | `~/.claude/skills/graphify` | **Yes** | Navigated the CNCjs dependency graph (`explain`, `path`, `query`, plus a scan for INFERRED edges). Every result was checked against source (`CNCJS_ANALYSIS.md` §1). |
-| **emil-design-eng** | anthropic-skills | **Yes** | Motion and interaction rules: no animation on high-frequency actions (jog, console, readouts), `scale(0.97)` press feedback at 100–160 ms, transitions on transform and opacity only, custom ease-out curve, exit faster than enter, gate hover behind `(hover:hover)`, `prefers-reduced-motion`. |
-| **apple-design** | anthropic-skills | **Yes** | Foundations: respond on pointer-down; *grouping and mapping* (the jog pad mirrors the machine axes); four kinds of feedback (status, completion, warning, error); confirm only irreversible actions (Stop job); *simplicity, not minimalism*; system typography with size-specific tracking; reduced motion and contrast media queries. |
-| **dataviz** | bundled | **Yes** | Job progress follows the dataviz *meter* and *stat tile* guidance: it is a number and a meter, not a chart. Status colors are kept separate from the accent and always pair with an icon and a label. The palette was **run through `validate_palette.js`** (§9.3). Tabular figures are used only in aligned columns. |
-| **cncjs-patterns** + instincts | `CNCJS-fork/.claude/` | Reference only | Describes CNCjs repo conventions (Yarn, commit scopes, i18n). Relevant only if the fork is ever changed, which is not part of this phase. |
-| docs, docx, pptx, pdf, xlsx, google-workspace, browser, computer-use, morning, etc. | anthropic-skills | No | Not relevant to the architecture or UI. |
+The UI follows a small set of interaction and visual rules. §9 has the details.
 
-No Next.js-, Tailwind- or accessibility-specific skill is installed, and none was added: the requirement was not to install extras. Those areas follow the platform's documented conventions plus the design skills above.
+| Area | Rules |
+|---|---|
+| Motion | No animation on high-frequency actions (jog, console, readouts). `scale(0.97)` press feedback at 100–160 ms. Transitions on transform and opacity only, with a custom ease-out curve; exit is faster than enter. Hover behaviour is gated behind `(hover:hover)`, and `prefers-reduced-motion` is respected. |
+| Interaction | Respond on pointer-down. Grouping and mapping: the jog pad mirrors the machine axes. Four kinds of feedback (status, completion, warning, error). Confirm only irreversible actions (Stop job). Simplicity, not minimalism. System typography with size-specific tracking. |
+| Data display | Job progress is a number and a meter, not a chart. Status colours are kept separate from the accent and always pair with an icon and a label. The palette was checked for contrast and for colour-vision deficiencies (§9.3). Tabular figures are used only in aligned columns. |
 
 ---
 
@@ -37,7 +34,7 @@ No Next.js-, Tailwind- or accessibility-specific skill is installed, and none wa
 |---|---|---|
 | Framework | **Next.js 16** (App Router) + **React 19** + **TypeScript** | As required |
 | Process host | **Next.js custom server** (`server.ts`) | Hosts the backend's Socket.IO engine on the same `http.Server` (D1) |
-| Machine backend | **Built-in CNCjs GRBL backend**, carried over from CNCJS-fork and rewritten into TypeScript (`src/server/`) | Same logic as CNCjs, no external fork (D2, revised 2026-11-08; `BACKEND_REWRITE_PLAN.md`) |
+| Machine backend | **Built-in CNCjs GRBL backend**, carried over from CNCjs 1.11.5 and rewritten into TypeScript (`src/server/`) | Same logic as CNCjs, no external fork (D2, revised 2026-11-08; `BACKEND_INTEGRATION.md` §7.1) |
 | Realtime client | **`socket.io-client@4.x`** | Protocol lock-step with the backend's Socket.IO 4 server (D3, revised: was 2.x with Socket.IO 2.2) |
 | Styling | **Tailwind CSS v4** with CSS-variable design tokens (`@theme`) | As required; tokens are defined once |
 | Primitives | **Radix UI**, only `@radix-ui/react-select` and `@radix-ui/react-dialog` | Accessible select and confirmation dialog without a full component library |
@@ -64,8 +61,10 @@ kinetiq/
 ├── postcss.config.mjs           @tailwindcss/postcss
 ├── public/favicon.svg
 ├── scripts/
+│   ├── start.mjs                npm start: dist/server.js in production mode, on any shell
+│   ├── dev-fake.mjs             npm run dev:fake: npm run dev with the fake controller's rc file
 │   ├── fake-controller.py       fake FluidNC on a pseudo-terminal (FAKE_CONTROLLER.md)
-│   ├── protocol-scenarios/      protocol diff: record.mts, compare.mjs, baseline/ (BACKEND_REWRITE_PLAN.md §4)
+│   ├── protocol-scenarios/      protocol diff: record.mts, compare.mjs, baseline/ (its own README.md)
 │   └── build-fluidnc-schema.mjs generates src/lib/fluidnc/schema.json (SETTINGS_EDITOR.md)
 ├── docs/                        ← this documentation
 └── src/
@@ -249,7 +248,7 @@ widget action ──▶ guard (derive.can*) ──▶ client.emit(...) ──▶
 | `--warn` | `#fab219` | Paused, Hold, Door, Waiting for controller |
 | `--crit` | `#d03b3b` | Alarm, Error, Connection error/lost, Reset button outline |
 
-**Validation (dataviz `validate_palette.js`, dark, surface `#16181b`):** all five non-neutral colors pass **contrast ≥ 3:1** and the chroma floor. As expected, `--ok` and `--crit` are **not** separable under deuteranopia (ΔE 4.1), and an amber "serious" step was too close to `--warn` (ΔE 13.6). So:
+**Validation (palette checker, dark, surface `#16181b`):** all five non-neutral colors pass **contrast ≥ 3:1** and the chroma floor. As expected, `--ok` and `--crit` are **not** separable under deuteranopia (ΔE 4.1), and an amber "serious" step was too close to `--warn` (ΔE 13.6). So:
 
 1. Kinetiq uses **three** status levels, not four.
 2. **Every status always pairs an icon with a text label.** Color is never the only signal.
@@ -470,7 +469,7 @@ Named, saved G-code snippets run with one click (`src/components/macros/MacrosWi
 - **Scripts:**
   - `dev`: `tsx watch server.ts`, excluding `src/app`, `src/components` and `src/lib` from the watch (Next's HMR handles those, so editing the UI never restarts the server or closes the port)
   - `build`: `next build && tsc -p tsconfig.server.json`
-  - `start`: `NODE_ENV=production node dist/server.js`
+  - `start`: `node scripts/start.mjs` (sets `NODE_ENV=production`, then loads `dist/server.js`; a Node launcher so it also works in Windows shells)
   - `typecheck`: `tsc --noEmit` for the app and the server
   - `fake-controller`, `dev:fake`: fake FluidNC for development (`FAKE_CONTROLLER.md`)
 - **Never** set `output: 'standalone'`, because it does not trace a custom server.

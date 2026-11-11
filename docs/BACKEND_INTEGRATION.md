@@ -47,15 +47,15 @@
 
 ## 3. How CNCjs code gets into Kinetiq
 
-> **Superseded 2026-11-08 (D2 revised):** none of the ways below is used any more. The CNCjs GRBL server code was copied into Kinetiq as JavaScript (`src/server/cnc`, loaded by `src/server/backend.ts`) and has since been rewritten into TypeScript under `src/server/` (§7.1, `BACKEND_REWRITE_PLAN.md`), so there is no fork build and no `cncjs-app` dependency. This section is kept as the record of the original evaluation.
+> **Superseded 2026-11-08 (D2 revised):** none of the ways below is used any more. The CNCjs GRBL server code was copied into Kinetiq as JavaScript (`src/server/cnc`, loaded by `src/server/backend.ts`) and has since been rewritten into TypeScript under `src/server/` (§7.1), so there is no fork build and no `cncjs-app` dependency. This section is kept as the record of the original evaluation.
 
 CNCjs is not published as a library, so Kinetiq needs its transpiled server code. Three ways were evaluated:
 
 | Way | Description | Pros | Cons |
 |---|---|---|---|
-| **B1 (recommended)** | Build `CNCJS-fork/dist/cncjs/server` with CNCjs's own Babel config (`babel -d dist/cncjs/server src/server`, then copy `src/package.json`). Kinetiq depends on it as `"cncjs-app": "file:../CNCJS-fork/dist/cncjs"`. | Tracks **our fork**. Installs only server dependencies. No CNCjs source is copied into Kinetiq. | Needs a one-time `yarn install` in the fork to get Babel, and a rebuild after fork updates. Building writes `dist/` (git-ignored) inside the fork. **Not done in this phase.** |
+| **B1 (recommended)** | Build `cncjs/dist/cncjs/server` in a local CNCjs checkout with CNCjs's own Babel config (`babel -d dist/cncjs/server src/server`, then copy `src/package.json`). Kinetiq depends on it as `"cncjs-app": "file:../cncjs/dist/cncjs"`. | Tracks **our fork**. Installs only server dependencies. No CNCjs source is copied into Kinetiq. | Needs a one-time `yarn install` in the fork to get Babel, and a rebuild after fork updates. Building writes `dist/` (git-ignored) inside the fork. **Not done in this phase.** |
 | B2 | Depend on the published npm `cncjs@1.11.x` and require `cncjs/dist/cncjs/server/...` | No build step | Pulls the full frontend dependency tree (React 15, three.js, …). Tracks upstream releases, not the fork. |
-| B3 | Kinetiq transpiles `../CNCJS-fork/src/server` into `vendor/` at build time | Self-contained | Duplicates CNCjs's build config, and Kinetiq would have to list CNCjs's server dependencies by hand. |
+| B3 | Kinetiq transpiles `../cncjs/src/server` into `vendor/` at build time | Self-contained | Duplicates CNCjs's build config, and Kinetiq would have to list CNCjs's server dependencies by hand. |
 
 Modules that Kinetiq loads from the build (CommonJS, `.default` export):
 
@@ -186,9 +186,9 @@ FluidNC speaks GRBL v1.1-style serial, but it is a different firmware. CNCjs was
 
 ### 7.1 Provenance (CNCjs)
 
-- **Source:** `CNCJS-fork/src/server` at commit `a3922a1bf` (CNCjs 1.11.5), copied into `src/server/cnc` as JavaScript on 2026-11-08 so Kinetiq no longer depends on `../CNCJS-fork`. The CNCjs MIT licence is in [`src/server/CNCJS_LICENSE`](../src/server/CNCJS_LICENSE); keep it with the code.
-- **Rewritten into TypeScript in phases 2–5** (`BACKEND_REWRITE_PLAN.md`, 2026-11-09/10), behaviour unchanged unless listed in the plan's §3a. Each file's header names the CNCjs file it came from (`was src/server/cnc/…`). `src/server/cnc/` no longer exists.
-- **Kinetiq changes** are marked in the code with `// Kinetiq:` or `// SECURITY (Kinetiq):` comments. The main ones: only the Grbl controller is registered (Marlin, Smoothie, TinyG/g2core removed); `list` answers with the rc `ports` when port detection fails; no `config:change` broadcast (it carried the JWT `secret`); `gcode:unload` (not `unload`) on reopen; M6 is always a manual tool-change pause (the `tool:change` routine, `tool.*` config and `lasertest:*` were removed); `GrblController.setExclusive()` for the settings editor's XModem upload; command names are looked up as own properties only; `settings.ts` holds only the fields the backend reads. Phase 1 removed the commands and events the UI never used (`BACKEND_REWRITE_PLAN.md` §3).
+- **Source:** `src/server` of [CNCjs](https://github.com/cncjs/cncjs) at commit `a3922a1bf` (CNCjs 1.11.5), copied into `src/server/cnc` as JavaScript on 2026-11-08 so Kinetiq no longer depends on a CNCjs checkout. The CNCjs MIT licence is in [`src/server/CNCJS_LICENSE`](../src/server/CNCJS_LICENSE); keep it with the code.
+- **Rewritten into TypeScript** (2026-11-09/10), file by file, with the serial traffic compared against the JavaScript backend after every step (`scripts/protocol-scenarios/`). Behaviour is unchanged except for the changes below and the fixes in §7.3. Each file's header names the CNCjs file it came from (`was src/server/cnc/…`). `src/server/cnc/` no longer exists.
+- **Kinetiq changes** are marked in the code with `// Kinetiq:` or `// SECURITY (Kinetiq):` comments. The main ones: only the Grbl controller is registered (Marlin, Smoothie, TinyG/g2core removed); `list` answers with the rc `ports` when port detection fails; no `config:change` broadcast (it carried the JWT `secret`); `gcode:unload` (not `unload`) on reopen; M6 is always a manual tool-change pause (the `tool:change` routine, `tool.*` config and `lasertest:*` were removed); `GrblController.setExclusive()` for the settings editor's XModem upload; command names are looked up as own properties only; `settings.ts` holds only the fields the backend reads. The commands and events the UI never used were removed: CNCjs macros, watch directory, CNCjs autolevel, the `Grbl:*` duplicate events, command aliases, `sleep`, rapid overrides, `feeder:*` and `statusreport`.
 - **Not carried over:** the Express app, REST API, i18n, views, the Marlin/Smoothie/TinyG controllers and the CNCjs CLI.
 
 ### 7.2 Security rule: shell commands
@@ -201,6 +201,70 @@ Keep it that way:
 - The planned Automation UI must offer a fixed allow-list of server-defined actions (for example "switch relay N on"), validated on the server, not free-form commands.
 
 The same rule is in the headers of `TaskRunner.ts`, `EventTrigger.ts` and `config/ConfigStore.ts`.
+
+### 7.3 Bugs found during the rewrite
+
+Found while typing the protocol and porting the code. Code comments cite them by number.
+
+| # | Bug | State |
+|---|---|---|
+| 1 | `config:change` broadcast the whole config, including the JWT `secret`, to every connected socket when the rc file changed. | **Fixed:** the event is gone. |
+| 2 | Reopening a port did not unload a leftover program (`unload` instead of `gcode:unload`). | **Fixed.** |
+| 3 | `%wait` typed in the console holds the Sender, not the Feeder. | Kept as in CNCjs. |
+| 4 | Extended real-time bytes go out UTF-8 encoded: `write()` takes a JS string, so jog cancel reaches the port as `0xC2 0x85` and the overrides as `0xC2 0x9X` (visible in `baseline/02-jog.trace` and `05-overrides.trace`). | Kept until jog cancel and the overrides are checked on hardware with raw single bytes. |
+| 5 | The macro-language sandbox (`[expr]`, `%var=`) could run arbitrary code: `posx.constructor.constructor("…")()` reached `Function`, so a malicious G-code file could execute code on the server. Inherited from CNCjs. | **Fixed:** `constructor`, `prototype` and `__…` properties are refused on reads and assignment paths, function expressions are not compiled with `Function()`, and `Function`/`Object` left `GLOBAL_OBJECTS`. |
+| 6 | The Sender runs its `dataFilter` a second time on a line that did not fit in the RX buffer, so the controller's filter can run twice for one program line. | Kept as in CNCjs. |
+| 7 | `await port.set(...)` does not wait: serialport v10's `set()` is callback-based. | Kept as in CNCjs. |
+| 8 | `command` looked handlers up on a plain object, so inherited names such as `valueOf` or `__proto__` threw inside the socket handler. | **Fixed:** own properties only; such names log "Unknown command". |
+| 9 | The bug 5 fix could be escaped with a computed key whose `toString` answers differently on the second call. | **Fixed:** each computed key is converted to a string once and that string is both checked and used; any read that yields `Function` resolves to `undefined`. |
+
+### 7.4 Safety mechanisms and interaction hazards
+
+Read in the CNCjs 1.11.5 source (commit `a3922a1bf`) before the port; the line numbers refer to those originals. The TypeScript code under `src/server/` keeps every mechanism. Other documents and code comments cite the identifiers below (S3, H1, …).
+
+| # | Mechanism | Where | Behaviour |
+|---|---|---|---|
+| S1 | Character-counting flow control | `Sender.js:157-189`, `GrblController.js:366-368` | Never overruns the controller's RX buffer. The 8-byte margin is deliberate. |
+| S2 | Program bytes are not echoed | `GrblController.js:477-496` | The Sender writes straight to serial. Program lines are not broadcast as `serialport:write`, which keeps sockets from being flooded. |
+| S3 | Alarm blocks the Feeder | `GrblController.js:343-347` | Queued manual commands are dropped and the queue is cleared while `activeState === 'Alarm'`. |
+| S4 | Errors pause the program | `GrblController.js:635-673` | During a run, `error:x` logs the offending line and calls `workflow.pause({err:true})` unless `state.controller.exception.ignoreErrors` is set. *(The default config defines `controller.exception.ignoreErrors`, a different key, so pause-on-error is the effective default.)* |
+| S5 | Pause and resume | `:1451-1466` | `gcode:pause` sets the workflow to paused, holds the Sender, and writes `!`. `gcode:resume` writes `~` and resumes the workflow (which resets the Feeder and unholds the Sender). |
+| S6 | Force stop | `:1424-1446` | `gcode:stop {force:true}` stops the workflow and rewinds the Sender. If the machine is in `Run` it writes `!`, waits 500 ms, and writes `0x18` (soft reset) if it is now in `Hold`. **Caveat:** `Hold` includes `Hold:1` (decelerating). A reset during deceleration can raise an ALARM because position may be lost. |
+| S7 | Soft reset | `:1508-1514` | `reset` stops the workflow, resets the Feeder, and writes `0x18`. |
+| S8 | Real-time bytes bypass queues | `writeln` `:1993-2004` | `~ ! ? 0x18` and extended `0x80-0xFF` bytes are written without a newline and are not queued. |
+| S9 | Status polling with watchdog | `:873-903, 944-1010` | `?` every 250 ms with a single-flight guard. The guard is force-cleared after 5 s without a reply. `$G` is polled only when idle, because it consumes RX buffer. |
+| S10 | Ready gating | `:542-558, 836-854, 980-983` | Polling waits for a startup banner or the first status report. Until then a throttled `?` is sent every 2 s. |
+| S11 | Completion detection | `:991-1009` | After the Sender finishes, the program auto-stops (`gcode:stop`) only after the machine has been idle with an unchanged position for at least 500 ms. |
+| S12 | Connection loss | `:82-96` | A serial `close` sets `ready=false`, closes the controller (emitting `serialport:close` and `serialport:change`), removes it from the store, and destroys it. **Streaming stops**, but the controller still runs whatever is already buffered. |
+| S13 | Open resets job state | `:1240-1248` | On open, the workflow is stopped and action flags are cleared. *Bug note:* `this.command('unload')` names a non-existent command. It logged `Unknown command` and did nothing. Fixed in Kinetiq (§7.3 bug 2). |
+| S14 | Browser disconnect is harmless | `CNCEngine.js:186-200` | A socket disconnect only removes the listener. **Streaming continues server-side.** |
+| S15 | Access control | `CNCEngine.js:147-168`, `access-control.js` | JWT is required at handshake. Non-private IPs are rejected unless remote access is enabled. |
+
+**Software is not an emergency stop.** Every mechanism above relies on a working process, a working USB link and responsive firmware. Feed hold (`!`) and soft reset (`0x18`) are controlled-stop commands. They do **not** replace a hard-wired emergency-stop circuit that cuts power to the TB6600 drivers or the spindle.
+
+**Rules that must stay under backend control**
+
+The Kinetiq frontend must never re-implement any of the following, or send around it:
+
+1. RX-buffer accounting and line release. The frontend never streams program lines itself.
+2. The ok/error bookkeeping that ties responses to the Sender or Feeder.
+3. Alarm gating of queued commands.
+4. Pause-on-error.
+5. Status and parser-state polling.
+6. Job completion detection.
+7. Connection-loss teardown.
+
+
+**Interaction hazards**
+
+| Hazard | Evidence | Consequence for Kinetiq |
+|---|---|---|
+| **H1: Direct writes during a program break char-counting.** | While `workflow.state === 'running'`, *every* `ok` is counted as a Sender acknowledgement (`GrblController.js:607-615`). A non-real-time line sent with `write`/`writeln` produces an extra `ok`, which desynchronises `received` from the bytes actually in flight. | Disable console input and jogging while the workflow is `running` or `paused`. Real-time control (`!`, `~`, `0x18`) stays available. |
+| **H2: Feeder commands during a program also write immediately.** | `command('gcode')` calls `feeder.next()` if nothing is pending (`:1612-1616`), and the Feeder writes straight to serial. | Same gating as H1. |
+| **H3: The CNCjs default jog has no feed rate.** | The CNCjs Axes widget sends `G91`, `G0 X…`, `G90` as three Feeder commands (`app/widgets/Axes/index.jsx:195-200`). | Kinetiq uses GRBL v1.1 `$J=` jogging through the same `command('gcode')` path. It carries a feed rate, leaves modal state unchanged, and can be cancelled with `jogCancel` (`0x85`). `gcode-parser` stripped mode keeps `$J=` lines intact (checked in `gcode-parser@2.2.0 dist/cjs/index.js:151-179`). |
+| **H4: Error objects do not survive Socket.IO.** | `callback(err)` and `serialport:error {err}` send `Error` instances. Socket.IO 2 serialises them with JSON, and `JSON.stringify(new Error())` is `{}`. | Kinetiq can show "failed to open *port*", but not the OS reason (busy, permission, not found). The reason is in the server log. Confirmed at runtime, also on Socket.IO 4 (§8 U2). |
+| **H5: Feeder stuck in pending.** | If an `ok` never arrives (for example the controller reboots mid-command), `feeder.state.pending` stays `true`, and later `gcode` commands queue silently until `reset`. | Show `feeder:status.queue > 0` as "commands queued". A soft reset clears it. |
+| **H6: Force stop during deceleration.** | See S6. | Kinetiq's Stop sequence pauses first, waits for `Hold:0` (subState 0), then issues `gcode:stop {force:true}`. Each step is an existing command. |
 
 ---
 
@@ -215,7 +279,7 @@ The same rule is in the headers of `TaskRunner.ts`, `EventTrigger.ts` and `confi
 | U10 | Dev-only: hot reload of `src/lib/cnc/client.ts` resets its module state while the page keeps the old socket, so actions silently do nothing until a page reload (observed in M1) | Development only | Reload the page after editing `client.ts`, or keep the socket on `globalThis` in dev. |
 | U3 | FluidNC hardware checks | F1, F2, F3, F4, F6, F7 and F15 were **observed on 2026-11-08** with FluidNC v4.0.1. F9 and F10 are partly observed (relative jogging, hold/resume/reset, feed override); absolute jog and `0x85` remain. | — |
 | U4 | Socket.IO 2.2 and Engine.IO 3 are old and carry published advisories (for example permissive default CORS before socket.io 2.4) | **Resolved (2026-11-11).** Server and client moved to Socket.IO 4 (no CORS by default, `allowEIO3` off, client script not served). | Loopback bind and the Host-header check stay. |
-| U5 | `CNCJS-fork` must be built before Kinetiq can run | **Resolved (2026-11-08):** the backend is embedded in `src/server/` (D2 revised; first as JavaScript in `src/server/cnc`, now TypeScript); `npm install` is the only setup step. | — |
+| U5 | A CNCjs checkout must be built before Kinetiq can run | **Resolved (2026-11-08):** the backend is embedded in `src/server/` (D2 revised; first as JavaScript in `src/server/cnc`, now TypeScript); `npm install` is the only setup step. | — |
 | U6 | `ignoreErrors` key mismatch (`state.controller.exception.ignoreErrors` vs the default `controller.exception.ignoreErrors`) | None (the safe default holds) | Leave as is. Kinetiq never sets either key. |
 | U7 | `remainingTime` is a line-count extrapolation | Inaccurate on uneven programs | **Resolved (2026-11-10):** the Job widget computes its own estimate from the toolpath, feeds and `$110`–`$122`, calibrated against the run (`API_REFERENCE.md` §7.3). `remainingTime` is only the fallback. |
 
@@ -226,6 +290,6 @@ The same rule is in the headers of `TaskRunner.ts`, `EventTrigger.ts` and `confi
 | ID | Decision | Recommendation (all approved) |
 |---|---|---|
 | **D1** | Use a Next.js **custom server** (`node dist/server.js`) to host CNCEngine in the same process | **Approve.** It is the only single-application design that keeps CNCjs unmodified and safe. |
-| **D2** | Consume CNCjs as a **fork build** (`file:../CNCJS-fork/dist/cncjs`, way B1) | Approve B1. B2 is the fallback. **Revised 2026-11-08:** the CNCjs GRBL server code now lives in `src/server/` (rewritten into TypeScript, §7.1) and Kinetiq no longer depends on `CNCJS-fork`. |
+| **D2** | Consume CNCjs as a **fork build** (`file:../cncjs/dist/cncjs`, way B1) | Approve B1. B2 is the fallback. **Revised 2026-11-08:** the CNCjs GRBL server code now lives in `src/server/` (rewritten into TypeScript, §7.1) and Kinetiq no longer depends on a CNCjs checkout. |
 | **D3** | Pin **`socket.io-client@2.x`** in the frontend (protocol lock-step with the CNCjs server) | Approved; **revised 2026-11-11:** server and client moved to Socket.IO 4 together, so the client is `socket.io-client@4.x`. The lock-step rule stays: upgrade both sides at once. |
 | **D4** | Minimal job and safety controls beyond pure monitoring: Load file (single file picker, not a file manager), Start/Pause/Resume/Stop in the Job widget, plus a persistent **Feed Hold** and **Reset** in the top bar | Approve. Without these a job cannot run, and a hold/reset control should always be reachable. Unlock (`$X`) and Home (`$H`) were later added as buttons at the user's request (2026-11-08). |

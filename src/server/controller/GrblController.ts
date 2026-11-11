@@ -626,7 +626,7 @@ class GrblController {
 
         if (setOptions) {
           await delay(100);
-          // CNCjs quirk (plan §3a bug 7, kept): serialport v10's set() is callback-based and
+          // CNCjs quirk (BACKEND_INTEGRATION.md §7.3 bug 7, kept): serialport v10's set() is callback-based and
           // returns void, so this await does not wait for the flags to be set.
           await this.connection!.port!.set(setOptions);
           await delay(100);
@@ -799,7 +799,7 @@ class GrblController {
   command(cmd: string, ...args: unknown[]): void {
     // Socket input is not validated: the arguments go to the handler as they arrived.
     const table = this.commands as unknown as Record<string, ((...a: unknown[]) => unknown) | undefined>;
-    // Kinetiq (plan §3a bug 8, fixed in phase 5): own properties only. CNCjs indexed the plain
+    // Kinetiq (BACKEND_INTEGRATION.md §7.3 bug 8, fixed): own properties only. CNCjs indexed the plain
     // object directly, so an inherited name such as 'toString', 'valueOf', 'constructor' or
     // '__proto__' found an Object.prototype member (returned, threw a TypeError, or threw "handler
     // is not a function") instead of reaching "Unknown command" below.

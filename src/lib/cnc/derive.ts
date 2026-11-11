@@ -139,7 +139,7 @@ export interface MachineControlsView {
 /**
  * Gating for the top-bar machine controls. Real-time Hold and Reset stay available whenever the port
  * is open; Home and Unlock (line commands) require an idle workflow so they cannot disturb streaming
- * (CNCJS_ANALYSIS.md hazard H1).
+ * (BACKEND_INTEGRATION.md §7.4, hazard H1).
  */
 export function machineControlsView(s: MachineState): MachineControlsView {
   const open = s.connection.phase === 'open';

@@ -10,8 +10,8 @@
  *   - src/server/grbl/GrblRunner.ts                       controller state/settings objects
  *   - src/server/streaming/{Sender,Feeder,Workflow}.ts    status payloads
  *
- * Ground rule of the backend rewrite (docs/BACKEND_REWRITE_PLAN.md §2): event names, payload shapes
- * and command names do not change. Later phases are checked against this file.
+ * Ground rule (docs/BACKEND_INTEGRATION.md §7.1): event names, payload shapes
+ * and command names do not change. Backend changes are checked against this file.
  *
  * SHARED with the browser bundle (re-exported by src/lib/cnc/protocol.ts): types and plain
  * constants only. No Node imports, no runtime dependencies.
@@ -21,7 +21,7 @@
  *     functions vanish, and an `Error` object arrives as `{}` (its `message` is not an own enumerable
  *     property). Only a rejected handshake carries a message: the client's `connect_error` Error.
  *   - Positions are decimal STRINGS exactly as the controller printed them ("12.500"), not numbers.
- *   - Phase 1 of BACKEND_REWRITE_PLAN.md removed the commands and events the UI never used
+ *   - The TypeScript rewrite removed the commands and events the UI never used
  *     (CNCjs macros, watch directory, CNCjs autolevel, Grbl:* duplicates, command aliases, sleep,
  *     rapid overrides, feeder:* and statusreport); they are no longer part of the protocol.
  *     Kinetiq's own `macro:run` (by id, macros stored by src/server/macros.ts) was added later.

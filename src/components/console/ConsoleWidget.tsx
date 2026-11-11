@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Console widget (IMPLEMENTATION_PLAN M3, ARCHITECTURE §10.8): the controller's traffic and a line
+ * Console widget (ARCHITECTURE §10.8): the controller's traffic and a line
  * to type commands into. Floating like the other widgets; collapsed (the default), the header
  * shows the latest meaningful line.
  *

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security problem
+    url: https://github.com/FurkanGulabi/kinetiq/security/advisories/new
+    about: Report privately anything that could let someone else move a machine or run code.

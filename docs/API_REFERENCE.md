@@ -2,7 +2,7 @@
 
 **Project:** Kinetiq: Advanced Motion Control
 **Scope:** The verified communication interface between the Kinetiq UI and the embedded CNCjs backend (GRBL controller only).
-**Source of truth:** `CNCJS-fork/src/server/services/cncengine/CNCEngine.js` and `CNCJS-fork/src/server/controllers/Grbl/GrblController.js`. Line numbers refer to commit `a3922a1bf`. The same code now runs inside Kinetiq, rewritten into TypeScript under `src/server/` (the engine is `src/server/engine/SocketEngine.ts`, the controller `src/server/controller/`, the IP policy `src/server/session.ts`; payload types in `src/server/protocol.ts`), so the line numbers below refer to the CNCjs originals only. Kinetiq's changes are listed in `BACKEND_INTEGRATION.md` §7.1.
+**Source of truth:** `src/server/services/cncengine/CNCEngine.js` and `src/server/controllers/Grbl/GrblController.js` of [CNCjs](https://github.com/cncjs/cncjs) 1.11.5. Line numbers refer to commit `a3922a1bf`. The same code now runs inside Kinetiq, rewritten into TypeScript under `src/server/` (the engine is `src/server/engine/SocketEngine.ts`, the controller `src/server/controller/`, the IP policy `src/server/session.ts`; payload types in `src/server/protocol.ts`), so the line numbers below refer to the CNCjs originals only. Kinetiq's changes are listed in `BACKEND_INTEGRATION.md` §7.1.
 
 Every event, payload and command below was read in source. Anything Kinetiq **derives** on the client is marked **[Kinetiq-derived]**. Anything not yet observed at runtime is marked **[runtime check]**.
 
@@ -71,7 +71,7 @@ interface OpenOptions {
 
 "Attached sockets" means every socket that called `open` for this port (`addConnection`). A socket that has not called `open` receives only `startup`, `serialport:list` and the global `serialport:change`.
 
-**Ignored by Kinetiq:** `task:start/finish/error` (rc `events` shell tasks). Removed from the backend (rewrite phase 1, 2026-11-09): `Grbl:state`, `Grbl:settings`, `watchdir:change`, `autolevel:update/complete`, and `config:change` (it broadcast the rc config including the JWT secret). The typed list of every event is `src/server/protocol.ts`.
+**Ignored by Kinetiq:** `task:start/finish/error` (rc `events` shell tasks). Removed from the backend (2026-11-09): `Grbl:state`, `Grbl:settings`, `watchdir:change`, `autolevel:update/complete`, and `config:change` (it broadcast the rc config including the JWT secret). The typed list of every event is `src/server/protocol.ts`.
 
 ---
 
@@ -202,7 +202,7 @@ The backend has no explicit "connecting" or "lost" event. Both are client-side d
 |---|---|
 | Emit | `socket.emit('writeln', port, line, { __sender__: clientId })` |
 | Why `writeln` | It matches CNCjs console behaviour (direct, not queued), so `$X`, `$H` and `?` work in Alarm state, where Feeder commands are dropped (`GrblController.js:343-347`). |
-| Guard | **Disabled while `workflow:state !== 'idle'`** (hazard H1: an extra `ok` would desynchronise char counting), and while a Kinetiq sequence (Probe Z, height-map probing, settings operation) owns the port (`derive.consoleView`). |
+| Guard | **Disabled while `workflow:state !== 'idle'`** (hazard H1, `BACKEND_INTEGRATION.md` §7.4: an extra `ok` would desynchronise char counting), and while a Kinetiq sequence (Probe Z, height-map probing, settings operation) owns the port (`derive.consoleView`). |
 
 ---
 

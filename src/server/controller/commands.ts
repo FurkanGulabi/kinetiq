@@ -9,7 +9,7 @@
  * 'client'), or queue lines on the Feeder.
  *
  * Extended real-time bytes (jog cancel 0x85, overrides 0x90–0x9D) are JS strings, so they reach
- * the port UTF-8 encoded as `0xC2 0x85` etc. (docs/BACKEND_REWRITE_PLAN.md §3a bug 4, kept until a
+ * the port UTF-8 encoded as `0xC2 0x85` etc. (docs/BACKEND_INTEGRATION.md §7.3 bug 4, kept until a
  * hardware check).
  */
 import ensureArray from '../util/ensureArray';
@@ -49,7 +49,7 @@ export type CommandTable = { [C in ControllerCommandName]: CommandHandler<C> };
 
 /**
  * Builds the table: a plain object literal, as in CNCjs. GrblController.command() looks names up
- * as own properties only, so inherited Object.prototype names are unknown commands (plan §3a bug 8).
+ * as own properties only, so inherited Object.prototype names are unknown commands (BACKEND_INTEGRATION.md §7.3 bug 8).
  */
 export const createCommandTable = (controller: GrblController): CommandTable => ({
   'gcode:load': (name, gcode, context?, callback?) => {

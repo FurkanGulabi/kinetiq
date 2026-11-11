@@ -2,9 +2,7 @@
 
 **A modern control interface for DIY CNC machines.** Kinetiq connects to a GRBL-compatible controller over USB, shows the machine live in 3D, and lets you jog, probe, level and run G-code from a browser on the computer next to the machine. It is built and used on a DIY 3-axis router running [FluidNC](https://github.com/bdring/FluidNC) on an ESP32.
 
-<!-- Screenshot: save it as docs/images/kinetiq.png and uncomment the next line.
-![Kinetiq connected to a CNC router: 3D view, position, jog and job widgets](docs/images/kinetiq.png)
--->
+![Kinetiq running a job: 3D toolpath view with position, jog and job widgets](docs/images/kinetiq.png)
 
 Kinetiq is one Next.js application with a built-in CNC backend: the GRBL server code of [CNCjs](https://github.com/cncjs/cncjs), rewritten in TypeScript, handles serial communication, streaming and the safety logic.
 

@@ -4,7 +4,7 @@
  * Single-page workspace (ARCHITECTURE §10.1). The live 3D view fills the window as the page
  * background. Above it float, in glass: the fixed top bar (connection, machine state, Leveling,
  * Settings, Reset layout, Hold/Reset), alert cards under it, the view toolbar, and the draggable,
- * collapsible widgets Position & Jog, Job, Probe Z and Console.
+ * collapsible widgets Position & Jog, Job, Probe Z, Console and Macros.
  *
  * Safety: the top bar never moves, never collapses and stays above every widget and sheet, so
  * Hold and Reset are always one click away.
@@ -16,6 +16,7 @@ import { resetLayout, TOP_BAR } from '@/lib/ui/layout';
 import { Button } from '@/components/ui/Button';
 import { ProbeSection } from '@/components/position/ProbeSection';
 import { ConsoleWidget } from '@/components/console/ConsoleWidget';
+import { MacrosWidget } from '@/components/macros/MacrosWidget';
 import { clearConnectionError, startClient } from '@/lib/cnc/client';
 import { connectionErrorMessage, machineStateView } from '@/lib/cnc/derive';
 import { useMachine } from '@/lib/cnc/store';
@@ -151,6 +152,7 @@ export function Workspace() {
           <JobPanel />
           <ProbeSection />
           <ConsoleWidget />
+          <MacrosWidget />
         </>
       ) : null}
     </div>

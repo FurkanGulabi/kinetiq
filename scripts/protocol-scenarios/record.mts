@@ -24,7 +24,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import io from 'socket.io-client';
+import { io } from 'socket.io-client';
 import { goToZeroLines, jogLine, WCS_P } from '../../src/lib/cnc/commands.ts';
 import { compensate } from '../../src/lib/leveling/compensate.ts';
 import { gridAxis, probeOrder, type HeightMap } from '../../src/lib/leveling/heightmap.ts';
@@ -248,8 +248,8 @@ class Session {
     if (!res.ok) throw new Error(`session request failed (${res.status})`);
     this.token = ((await res.json()) as { token: string }).token;
 
-    // Same options as client.ts startClient().
-    this.socket = io(this.base, { path: '/socket.io', query: `token=${this.token}`, reconnection: false });
+    // Same path and token handshake as client.ts startClient() (`auth: { token }`), without reconnection.
+    this.socket = io(this.base, { path: '/socket.io', auth: { token: this.token }, reconnection: false });
     const s = this.socket;
     s.on('workflow:state', (w: string) => {
       this.workflow = w;
@@ -280,8 +280,7 @@ class Session {
     // startup → list → open (client.ts: 'startup' handler, listPorts, openPort).
     const ports = await new Promise<{ port: string }[]>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('no startup / serialport:list from the server')), 15000);
-      s.on('connect_error', (e: Error) => reject(e));
-      s.on('error', (e: unknown) => reject(new Error(String(e))));
+      s.on('connect_error', (e: Error) => reject(e)); // also a rejected handshake (Socket.IO 4)
       s.once('startup', () => s.emit('list'));
       s.once('serialport:list', (list: { port: string }[]) => {
         clearTimeout(timer);
@@ -803,7 +802,7 @@ const SCENARIOS: Record<string, Scenario> = {
       await jog('Y', -1, 10, 'blocked'); // towards the home switch
       await jog('Y', 1, 10, 'sent');
       // Two presses queued at once: the second starts where the first will end.
-      const second = s.trace.waitFor((t) => t === '$J=G53 G90 G21 X-1 F1000', 15000, 'second queued jog, shortened');
+      const second = s.trace.waitFor((t) => t === '$J=G53 G90 G21 X0 F1000', 15000, 'second queued jog, shortened');
       s.gcode(jogLine('X', 1, 100, 1000, 'mm'));
       s.gcode(jogLine('X', 1, 100, 1000, 'mm'));
       await second;
@@ -813,6 +812,54 @@ const SCENARIOS: Record<string, Scenario> = {
       s.writeln('$J=G91 G21 Y500 F3000');
       await typed;
       await s.waitIdle();
+    },
+  },
+
+  '11-macros': {
+    description: 'macros: create over HTTP, run refused during a job, run (a second run refused while it sends), run of a deleted macro refused',
+    async run(s) {
+      const content = ['G21 G91', 'G0 X5 Y5', '%step = 2.5', 'G0 X[step] Y[-step]', '$J=G91 G21 Z-1 F600', 'G90'].join('\n');
+      const macro = await s.http('POST', '/api/kinetiq/macros', { name: 'Protocol macro', content });
+      const id = String(macro.id);
+      const list = (await s.http('GET', '/api/kinetiq/macros')) as unknown as { id: string }[];
+      if (!Array.isArray(list) || list.length !== 1 || list[0].id !== id) throw new Error('macro list does not hold the new macro');
+      // MacrosWidget Run → client.ts runMacro(id): only the id goes over the socket.
+      const run = () => s.command('macro:run', id, { __sender__: CLIENT_ID });
+      const refused = (why: string) => s.nextRead((l) => l.startsWith('[MSG:WARN: Kinetiq: macro') && l.includes(why), 5000, `macro refused: ${why}`);
+
+      // Refused while a job is paused at M0 (nothing reaches the port), then the job is stopped.
+      await s.load('job-m0-m6.nc', fixture('job-m0-m6.nc'));
+      s.command('gcode:start');
+      await s.waitWorkflow('running');
+      await s.waitWorkflow('paused');
+      await s.trace.waitFor((t) => t.startsWith('M0'), 10000, 'M0 line');
+      await s.waitIdle();
+      let refusal = refused('A job is running or paused');
+      run();
+      await refusal;
+      await stopJob(s);
+      await s.waitWorkflow('idle');
+      await s.waitIdle();
+
+      // Run: the lines go out one at a time through the Feeder ([step] evaluated, $J= through
+      // TravelGuard, off here). A second Run clicked at once is refused: the first is still sending.
+      const started = s.nextRead((l) => l.startsWith('[MSG:INFO: Kinetiq: running macro'), 5000, 'macro started');
+      refusal = refused('Earlier commands are still being sent');
+      run();
+      run();
+      await started;
+      await refusal;
+      await s.trace.waitFor((t) => t === 'G90', 15000, 'last macro line');
+      await s.waitIdle();
+
+      // Deleted (e.g. in another tab): refused by id.
+      const del = await fetch(`${s.base}/api/kinetiq/macros/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${s.token}` } });
+      s.log('http', 'DELETE', `/api/kinetiq/macros/${id}`, del.status);
+      if (del.status !== 204) throw new Error(`DELETE macro → ${del.status}`);
+      refusal = refused('no longer exists');
+      run();
+      await refusal;
+      await sleep(500);
     },
   },
 };

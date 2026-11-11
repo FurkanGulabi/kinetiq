@@ -3,13 +3,14 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { Button } from './Button';
 
-/** Confirmation for irreversible actions only (ARCHITECTURE §9.4: used for Stop job). */
+/** Confirmation for irreversible actions only (ARCHITECTURE §9.6: Stop job, Delete macro). */
 export function ConfirmDialog({
   open,
   onOpenChange,
   title,
   description,
   confirmLabel,
+  cancelLabel = 'Keep running',
   onConfirm,
 }: {
   open: boolean;
@@ -17,6 +18,8 @@ export function ConfirmDialog({
   title: string;
   description: React.ReactNode;
   confirmLabel: string;
+  /** The safe choice, focused when the dialog opens. */
+  cancelLabel?: string;
   onConfirm: () => void;
 }) {
   return (
@@ -31,7 +34,7 @@ export function ConfirmDialog({
           <div className="mt-5 flex justify-end gap-2">
             <Dialog.Close asChild>
               <Button variant="secondary" autoFocus>
-                Keep running
+                {cancelLabel}
               </Button>
             </Dialog.Close>
             <Button

@@ -1,6 +1,7 @@
 # Gerçek makine testi: kontrol listesi (2026-11-10)
 
 **Dal:** `claude/diy-machine-limits-xf2hg3` (hareket sınırları) + `main`'de olup makinede hiç denenmemiş işler.
+**Ek (2026-11-11):** H, I ve J bölümleri `claude/proje-eksikler-gelistirmeler-i4x8r6` dalındaki Socket.IO 4, klavye jog ve makro işleri içindir; bu dal A–G'deki işleri de içerir, hepsi bu daldan test edilebilir (`npm install` gerekir, bağımlılıklar değişti).
 **Makine:** ESP32 + FluidNC v4.0.1, `/dev/tty.usbserial-110`, 115200.
 
 Bu belge test **öncesi** durumu gösterir: her satırın "Sonuç" sütunu boş, test sırasında doldurulacak. Aşağıdaki hiçbir madde gerçek makinede denenmedi; "Sahte kontrolcü" sütunu yalnızca simülatörde ne görüldüğünü söyler.
@@ -129,6 +130,59 @@ Tümü geçerse `docs/BACKEND_REWRITE_PLAN.md`'de faz 6 "tamam" işaretlenir.
 | G4 | Aynı | Feed override değiştir | Kalan süre buna göre güncellenir | |
 | G5 | Bağlantı | Sayfayı yenile / ikinci sekme aç | Port yeniden açılmadan bağlanır; "homed" durumu ve sınırlar yeni sekmede de doğru gelir | |
 
+## H. Socket.IO 4 geçişi (2026-11-11, dal `claude/proje-eksikler-gelistirmeler-i4x8r6`)
+
+Sunucu ve istemci Socket.IO 2.2'den 4.8.4'e geçti; `socketio-jwt` kalktı, token artık `jsonwebtoken` ile (yalnız HS256) doğrulanıyor. Olay adları ve veriler değişmedi; sahte kontrolcüde seri port trafiği eski sürümle birebir aynı. Seri porta giden bir şey değişmediği için buradaki adımlar bağlantı katmanını dener; hareketli adımlar F bölümüyle birlikte kapanır.
+
+| # | Adım | Beklenen | Sahte kontrolcü | Sonuç |
+|---|---|---|---|---|
+| H1 | `npm install` sonrası `npm run dev`, sayfayı aç, bağlan | Port listesi gelir, Idle veya Alarm, konumlar saniyede ~4 kez güncellenir | Geçti | |
+| H2 | Bağlıyken sayfayı yenile | Connect'e basmadan bağlanır, kart yeniden başlamaz, konum ve "homed" durumu doğru gelir | Geçti | |
+| H3 | İkinci sekme aç | İki sekme de aynı durumu gösterir; birinde atılan jog diğerinde görünür | Yalnız yenileme denendi | |
+| H4 | Bağlıyken sunucuyu durdur (Ctrl-C), yeniden başlat | Sayfa önce "offline" gösterir, sonra kendiliğinden bağlanır ve port listesini alır. Ctrl-C'de port temiz kapanır | Geçti | |
+| H5 | Kısa bir hava işi sırasında sayfayı yenile | İş kesilmez; sayfa çalışan işe bağlanır, ilerleme ve durum doğru gelir | Denenmedi | |
+| H6 | 30+ dakika bağlı ve boşta bırak, sonra jog at | Bağlantı kopmamıştır (ya da kendiliğinden geri gelmiştir), jog çalışır | Denenmedi | |
+| H7 | F bölümündeki hareketli adımlar (jog, jog cancel, override, pause/resume, stop) | F ile aynı. Bu adımlar artık yeni soket katmanı üzerinden gider | Trafik eski sürümle aynı | |
+
+## I. Klavye ile jog (2026-11-11)
+
+Position widget'ında JOG başlığının yanındaki **Keyboard jog** anahtarı; varsayılan kapalı. Tuşlar: ←/→ = X−/X+, ↓/↑ = Y−/Y+, PageDown/PageUp = Z−/Z+, Esc = jog iptali, `[` / `]` = adım boyunu küçült / büyüt. Her basış seçili adım ve hızla tek bir jog atar; basılı tutmak tekrar etmez. İlk denemeleri **1 mm adımla**, Z yukarıdayken yapın.
+
+| # | Adım | Beklenen | Sahte kontrolcü | Sonuç |
+|---|---|---|---|---|
+| I1 | Anahtar kapalıyken ok tuşlarına bas | Hareket yok, konsolda `$J=` yok | Geçti | |
+| I2 | Anahtarı aç, home yapmadan ←/→/↑/↓ bas | X/Y hareket etmez (pad düğmeleri de kapalıdır); PageUp/PageDown Z'yi oynatır | Geçti | |
+| I3 | Home sonrası, 1 mm adımla altı tuşu sırayla dene | Her tuş yalnız kendi eksenini, pad düğmesiyle aynı yönde, 1 mm oynatır. **Yön pad ile ters çıkarsa durun** | Geçti | |
+| I4 | Bir ok tuşunu 2–3 saniye basılı tut | Tek bir 1 mm jog; makine yürümeye devam etmez | Geçti (15 keydown, 1 jog) | |
+| I5 | `]` ile adımı 10 mm yap, bir tuşa bas; `[` ile geri al | 10 mm gider; adım göstergesi tuşla birlikte değişir | Geçti | |
+| I6 | 100 mm adım ve düşük hızla jog başlat, hareket sürerken Esc'e bas | Hareket hemen durur (`0x85`), durum Idle'a döner | Geçti | |
+| I7 | Konsol satırına ve Go to alanına tıkla, ok tuşlarına bas | İmleç oynar, makine hareket etmez | Geçti | |
+| I8 | Ayarlar, yükleme ya da yükseklik haritası penceresi açıkken ok tuşlarına bas | Hareket yok; Esc pencereyi kapatır, jog iptali göndermez | Geçti | |
+| I9 | Hava işi çalışırken ve Hold'dayken tüm tuşları dene | Hiçbiri bir şey göndermez | Geçti (çalışırken) | |
+| I10 | Home tarafındaki sınıra (makine X0) gelince → tuşuna bas | Hareket yok; C bölümündeki pad davranışıyla aynı | Geçti | |
+| I11 | Position widget'ını daralt, tuşlara bas | Hareket yok | Geçti | |
+| I12 | İki tuşa çok hızlı art arda bas | En fazla iki jog gider, ikisi de sınır içinde kalır (pad'e çift tıklamayla aynı) | Denenmedi | |
+| I13 | Sayfayı yenile | Anahtar açık kalır, tuşlar çalışmaya devam eder | Geçti | |
+
+## J. Makrolar (2026-11-11)
+
+Yeni **Macros** widget'ı (kapalı başlar, Console'un üstünde). Makrolar `~/.kinetiqrc` içinde `kinetiq.macros` altında saklanır; Run yalnız makronun kimliğini gönderir, satırları backend sıraya koyar. `M0`/`M1`/`M6`, `%wait` ve ASCII dışı karakter içeren makrolar kaydedilmez. **Çalışan makroyu durdurma: üst çubukta Hold, sonra Reset.** Stop jog yalnız o anki jog'u bitirir, sıradaki satır yine gider.
+
+| # | Adım | Beklenen | Sahte kontrolcü | Sonuç |
+|---|---|---|---|---|
+| J1 | Widget'ı aç, bir makro ekle, düzenle, sil; sayfayı yenile | Liste doğru kalır; `~/.kinetiqrc` içinde yalnız `kinetiq.macros` değişir | Geçti | |
+| J2 | Hareketsiz makro (`$G` ve `G4 P0.5`) çalıştır | Konsolda "running macro" satırı ve satırlar sırayla; hareket yok | Geçti | |
+| J3 | Home sonrası, Z yukarıda: `G21 G91` / `G0 X5` / `G0 Y5` / `G0 X-5` / `G0 Y-5` / `G90` makrosunu çalıştır | 5 mm'lik kare çizer, başladığı yere döner, sonunda Idle | Geçti (satırlar sırayla) | |
+| J4 | Home yapmadan `$J=G91 G21 X10 F1000` içeren makroyu çalıştır | Jog gönderilmez, konsolda Kinetiq uyarısı | Geçti | |
+| J5 | Home sonrası `$J=G53 G21 X-500 F1000` içeren makroyu çalıştır | Jog sınıra (şu an X−198) kısaltılır | Geçti | |
+| J6 | 6 satırlık yavaş bir makro (`G1 X-20 F100` ve geri, üç kez) çalışırken Hold, sonra Reset | Hareket durur, kalan satırlar gönderilmez, widget'taki "Sending" yazısı kalkar. Reset sonrası durumu not edin (Idle mi Alarm mı, X/Y homed kaldı mı) | Geçti (dwell ile) | |
+| J7 | Aynı makro çalışırken yalnız Stop jog'a bas | `G1` hareketi etkilenmez (jog değil); bu beklenen davranıştır, durdurmak için J6 | Denenmedi | |
+| J8 | Bağlı değilken, Alarm'da ve hava işi sırasında Run düğmesine bak | Kapalıdır ve nedenini yazar | Geçti | |
+| J9 | Hava işi sırasında ikinci sekmeden makro çalıştırmayı dene | Düğme kapalı; yine de giderse backend reddeder, konsolda "not run" uyarısı, işe satır karışmaz | Geçti (backend reddi senaryoda) | |
+| J10 | Makro çalışırken Run'a tekrar bas | İkinci kez sıraya girmez | Geçti | |
+| J11 | Makro düzenleme penceresinde, Keyboard jog açıkken ok tuşlarıyla yaz | Makine hareket etmez | Geçti | |
+| J12 | `M0` içeren bir makro kaydetmeyi dene | Kaydedilmez, neden yazılır | Geçti | |
+
 ---
 
 ## Test öncesi bilinen eksikler
@@ -136,6 +190,9 @@ Tümü geçerse `docs/BACKEND_REWRITE_PLAN.md`'de faz 6 "tamam" işaretlenir.
 - Kinetiq konsoldan yazılan `G0` / `G1` satırlarını ve çalışan işin satırlarını sınırlamaz. Bunları yalnızca D bölümündeki firmware soft limit durdurur; D geçmeden gerçek iş çalıştırmayın.
 - Sığma kontrolü `G28`, `G92`, `G10` ve iş koordinat sistemi değişimini hesaplayamaz; uyarı verir, engellemez.
 - 200 mm geçicidir. Gerçek ölçüler gelince `TRAVEL_LIMIT_MM` ve config'teki `max_travel_mm` birlikte güncellenecek; o zaman C3, C5 ve D4 yeni değerlerle tekrarlanmalı (bu kez pay yalnızca 2 mm olacak).
+- Makrodaki `G0` / `G1` satırları da sınırlanmaz (yalnız `$J=` jog'ları sınırlanır); konsoldan yazılan satırlarla aynı durum. D geçmeden hareketli makroları küçük mesafelerle deneyin.
+- Probe Z ve yükseklik haritası adımları arasında makroyu yalnız arayüz engeller; backend bu durumu göremez.
+- Klavye jog'unda bir Step ya da Feed düğmesine tıkladıktan sonra odak orada kalır; odak başka yere geçene kadar ok tuşları jog atmaz.
 - Home tarafındaki 1 mm boşluk `pulloff_mm: 1` varsayımına dayanır; B2'de okunan değer farklıysa güncellenmeli.
 
 ## Test sonrası bana iletilecekler
@@ -145,3 +202,4 @@ Tümü geçerse `docs/BACKEND_REWRITE_PLAN.md`'de faz 6 "tamam" işaretlenir.
 3. B6 ve F7: Reset / Stop sonrası durum (Idle mi Alarm mı) ve konum.
 4. Geçmeyen her satırın numarası ve konsol çıktısı.
 5. Ölçtüyseniz gerçek kurs boyları (X, Y).
+6. H–J: geçmeyen satırlar; J6'da Reset sonrası durum; I3'te yönler pad ile aynı mıydı.

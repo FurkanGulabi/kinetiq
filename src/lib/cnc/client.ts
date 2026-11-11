@@ -5,8 +5,8 @@
  * Emits only verified events (docs/API_REFERENCE.md §2) and reduces server events into the store.
  * Policy (what is allowed when) lives in derive.ts, never here.
  */
-import io, { type Socket } from 'socket.io-client';
-import { DEFAULT_BAUDRATE, type OpenOptions, type ServerEvents } from './protocol';
+import { io, type Socket } from 'socket.io-client';
+import { DEFAULT_BAUDRATE, type ClientEvents, type OpenOptions, type ServerEvents } from './protocol';
 import { consoleRead, consoleWrite } from './console-store';
 import { getState, resetMachineState, setState, subscribe, type ProgramLeveling } from './store';
 
@@ -14,7 +14,8 @@ const SESSION_URL = '/api/kinetiq/session';
 const FIRMWARE_PATTERN = /FluidNC v(\d+(?:\.\d+)+[\w.-]*?)(?=[\s:\]]|$)/;
 const PREFS_KEY = 'kinetiq.connection';
 
-let socket: Socket | null = null;
+/** Typed by the shared protocol: handlers by ServerEvents, emit() by ClientEvents. */
+let socket: Socket<ServerEvents, ClientEvents> | null = null;
 let started = false;
 let tokenRetried = false;
 let sessionToken: string | null = null;
@@ -64,7 +65,9 @@ export function invalidateSessionToken(): void {
 }
 
 function on<E extends keyof ServerEvents>(event: E, handler: ServerEvents[E]): void {
-  socket?.on(event, handler as (...args: unknown[]) => void);
+  // The cast only bridges the generic (TS cannot narrow ServerEvents[E] through socket.io's
+  // conditional listener type): `handler` is ServerEvents[E] for this very `event`.
+  socket?.on(event, handler as never);
 }
 
 function setBackendError(message: string): void {
@@ -78,18 +81,29 @@ export async function startClient(): Promise<void> {
   }
   started = true;
 
-  let token: string;
+  // Fetched before connecting so an unreachable server fails fast; the auth callback sends it.
   try {
-    token = await fetchToken();
+    await fetchToken();
   } catch (err) {
     started = false;
     setBackendError(err instanceof Error ? err.message : 'Kinetiq server unreachable');
     return;
   }
 
-  socket = io('', {
+  socket = io({
     path: '/socket.io',
-    query: `token=${token}`,
+    // Function form: read on every (re)connect, so a refreshed token is the one sent. If the cached
+    // token was dropped (invalidateSessionToken), mint a new one first.
+    auth: (cb) => {
+      if (sessionToken) {
+        cb({ token: sessionToken });
+        return;
+      }
+      fetchToken().then(
+        (fresh) => cb({ token: fresh }),
+        () => cb({ token: '' }), // rejected by the handshake → connect_error below
+      );
+    },
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
   });
@@ -99,7 +113,7 @@ export async function startClient(): Promise<void> {
     setState((s) => ({ ...s, backend: 'online', backendError: null }));
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', (reason) => {
     // The serial port stays open server-side; on reconnect we re-attach (startup → list → open).
     setState((s) => ({
       ...resetMachineState(s),
@@ -107,19 +121,28 @@ export async function startClient(): Promise<void> {
       backendError: 'Connection to the Kinetiq server was lost',
       connection: { ...s.connection, phase: 'closed', error: null },
     }));
+    // Socket.IO 4 does not reconnect by itself after a server-side socket.disconnect(). The engine
+    // never does that, but if it ever happens, reconnect like any other loss.
+    if (reason === 'io server disconnect') {
+      socket?.connect();
+    }
   });
 
-  // socketio-jwt rejects the handshake with an 'error' event (e.g. expired token).
-  socket.on('error', async (err: unknown) => {
-    const message = typeof err === 'string' ? err : (err as { message?: string })?.message || 'Socket error';
-    if (!tokenRetried && /token|jwt|auth/i.test(message)) {
+  // The handshake middleware rejected this socket (SocketEngine: token, then IP, then user).
+  // Socket.IO 4 does not retry such a rejection by itself (`socket.active` is false); while the
+  // server is merely unreachable `socket.active` stays true and the manager keeps reconnecting.
+  socket.on('connect_error', async (err) => {
+    if (socket?.active) {
+      return;
+    }
+    const data = (err as Error & { data?: { type?: string } }).data;
+    const message = err.message || 'Socket error';
+    if (!tokenRetried && data?.type === 'UnauthorizedError') {
+      // Expired or invalid session token: mint a fresh one once and connect again.
       tokenRetried = true;
       try {
-        const fresh = await fetchToken();
-        if (socket) {
-          socket.io.opts.query = `token=${fresh}`;
-          socket.connect();
-        }
+        await fetchToken();
+        socket?.connect();
         return;
       } catch {
         // fall through to the error state
@@ -378,6 +401,20 @@ export function sendLine(line: string): void {
 }
 
 /**
+ * Run a saved macro (`macro:run`, Kinetiq). Only the id is sent: the backend reads the content from
+ * its macro store and queues the lines on the Feeder (feeder filter and TravelGuard apply), and it
+ * refuses with a `[MSG:WARN: Kinetiq: …]` console line when the machine is not ready.
+ * Callers check derive.macroView() first.
+ */
+export function runMacro(id: string): void {
+  const { port, phase } = getState().connection;
+  if (!socket || !port || phase !== 'open' || !id) {
+    return;
+  }
+  socket.emit('command', port, 'macro:run', id, { __sender__: clientId });
+}
+
+/**
  * Real-time overrides (CNCjs `feedOverride` / `spindleOverride` → GRBL 0x90–0x94 / 0x99–0x9D).
  * `step` is +10, −10, +1, −1, or 0 to reset to 100 %. Real-time bytes: safe while a job streams.
  */
@@ -466,7 +503,7 @@ export function stopJob(): void {
     const settled = s.workflow === 'paused' && Date.now() - startedAt >= STOP_SETTLE_MS;
     const stationary = settled && (active === 'Idle' || active === 'Alarm');
     if (holdComplete || stationary || (active === 'Door' && status?.subState === 0)) {
-      socket?.emit('command', port, 'gcode:stop', { force: true });
+      socket?.emit('command', port as string, 'gcode:stop', { force: true }); // phase 'open' ⇒ port is set
       finish();
     }
   };

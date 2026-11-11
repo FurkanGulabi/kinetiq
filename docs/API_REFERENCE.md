@@ -12,9 +12,9 @@ Every event, payload and command below was read in source. Anything Kinetiq **de
 
 | Item | Value | Source |
 |---|---|---|
-| Protocol | Socket.IO **2.2** server (Engine.IO 3). The client must be `socket.io-client@2.x`. | `package.json`, `CNCEngine.js:142` |
-| Path | `/socket.io` | `CNCEngine.js:144` |
-| Auth | JWT in the handshake query: `io(url, { query: 'token=' + token })` | `CNCEngine.js:147-150`, `app/index.jsx:122` |
+| Protocol | Socket.IO **4** server (Engine.IO 6, protocol v4). The client must be `socket.io-client@4.x`; v2/v3 clients are refused (`allowEIO3` is off). Same-origin only (no `cors` option); `/socket.io/socket.io.js` is not served. **[Kinetiq: migrated from Socket.IO 2.2]** | `package.json`, `src/server/engine/SocketEngine.ts` |
+| Path | `/socket.io` | `src/server/engine/SocketEngine.ts` |
+| Auth | JWT in the handshake `auth` payload: `io({ path: '/socket.io', auth: { token } })` (Kinetiq's client uses the function form, `auth: (cb) => cb({ token })`, so a refreshed token is sent on reconnect). Verified with `jsonwebtoken`, **HS256 only**, against `settings.secret`; then the IP policy, then the user check. A rejected handshake never reaches `connection`: the client gets `connect_error` with an `Error` whose `message` says why and, for a token failure, `data: { type: 'UnauthorizedError', code: 'credentials_required' \| 'invalid_token' }`. Socket.IO 4 does not retry a rejected handshake by itself. **[Kinetiq: replaces `socketio-jwt` and the `?token=` query]** | `src/server/session.ts` (`authenticateSocketToken`), `SocketEngine.ts` |
 | Token | `jwt.sign({ id, name }, settings.secret, { expiresIn: settings.accessTokenLifetime /* '30d' */ })`. With no users configured, `{ id: '', name: '' }` is valid. | `api/api.users.js:27-33, 74-83` |
 | IP policy | Loopback and private ranges are allowed unless `allowRemoteAccess` is set | `access-control.js:7-37` |
 | Kinetiq token endpoint | `GET /api/kinetiq/session` → `200 { token: string }`. Served by Kinetiq's custom server. **[Kinetiq-defined]**, see `BACKEND_INTEGRATION.md` §4.1 | — |
@@ -58,7 +58,7 @@ interface OpenOptions {
 | `serialport:open` | `{ port, baudrate, controllerType: 'Grbl', inuse: true }` | The port opened successfully, **or** a socket attached to an already-open port | attached sockets | `GrblController.js:1221-1226, 1310-1317` |
 | `serialport:change` | `{ port, inuse: boolean }` | The port opened or closed | **all** sockets | `GrblController.js:1229-1234, 1274-1279` |
 | `serialport:close` | `{ port, inuse: false }` | Close was requested **or** the connection was lost (USB unplugged, device reset) | attached sockets | `GrblController.js:1268-1271`, `:82-96` |
-| `serialport:error` | `{ err: object, port }` | The port failed to open. `err` is an `Error` and probably serialises to `{}` **[runtime check]**. | attached sockets | `GrblController.js:1189-1193` |
+| `serialport:error` | `{ err: object, port }` | The port failed to open. `err` is an `Error` and serialises to `{}` (confirmed on Socket.IO 2 and 4; the reason is only in the server log). | attached sockets | `GrblController.js:1189-1193` |
 | `serialport:read` | `line: string` | Every controller line forwarded to the user (see §5.2) | attached sockets | many sites in `GrblController.js:542-858` |
 | `serialport:write` | `data: string, context: { source: 'client' \| 'feeder', ...callerContext }` | Bytes written by `write`/`writeln` (`source:'client'`) or by the Feeder (`source:'feeder'`). **Program lines from the Sender and the `?`/`$G` polls are not emitted.** | attached sockets | `GrblController.js:354-357, 1985-1988` |
 | `controller:state` | `type: 'Grbl', state: GrblState` | Every 250 ms tick in which the runner state object changed | attached sockets | `GrblController.js:973-977, 1323-1327` |
@@ -294,6 +294,39 @@ interface JobRun { status: 'completed' | 'cancelled' | 'error'; startedAt: numbe
 
 `/api/kinetiq/machine-config` (read, save, restart, backups) for the FluidNC config editor. Same auth as §7.4. Endpoints, payloads and errors are in `SETTINGS_EDITOR.md` §3.4.
 
+### 7.6 Macros (Kinetiq HTTP API `src/server/macros.ts`, command `macro:run`) **[Kinetiq-defined]**
+
+Named G-code snippets (Macros widget, `ARCHITECTURE.md` §10.10). Stored in the rc file under **`kinetiq.macros`**, the only key this API writes.
+
+| Request | Response | Notes |
+|---|---|---|
+| `GET /api/kinetiq/macros` | `Macro[]`, in creation order | Malformed hand-edited entries are skipped |
+| `POST /api/kinetiq/macros` (body `{ name, content }`) | `201 Macro` | id and mtime set by the server |
+| `PUT /api/kinetiq/macros/<id>` (body `{ name, content }`) | `200 Macro` | Replaces name and content |
+| `DELETE /api/kinetiq/macros/<id>` | `204` | |
+
+```ts
+interface Macro { id: string /* 16 hex */; name: string; content: string /* lines joined by \n */; mtime: number /* epoch ms */ }
+```
+
+- **Auth:** same as §7.4 (loopback `Host` and `Authorization: Bearer <session JWT>`), else `403 { error: 'forbidden' }`.
+- **Validation** (`src/lib/macros/macro.ts`, shared with the UI): only `name` and `content` are read, every other field is dropped. Name trimmed, 1–60 characters, no control characters. Content: `\r\n` → `\n`, trailing spaces and blank lines removed; at least one non-blank line; ≤ 10,000 characters; printable ASCII plus tab only (anything else would reach the port as UTF-8 bytes 0x80–0xFF, which GRBL reads as real-time commands); no `%wait` line (in a manual line it holds the job Sender, CNCjs quirk); no M0/M1/M6 (they hold the Feeder, which only Reset releases). Names are unique, case-insensitive. At most 50 macros. Body ≤ 32 KB.
+- **Errors** (`{ error: string }`): `400` invalid JSON, not an object, or a validation failure (the message names the rule and the line); `404` unknown or malformed id; `405` other methods; `409` duplicate name or 50 macros already; `413` body over 32 KB (connection closed); `500` the rc file could not be parsed (nothing written).
+
+**Running a macro:** `command(port, 'macro:run', id, { __sender__: clientId })`. The browser never sends the content. The backend (`controller/commands.ts`) looks the id up, validates the stored content again (the rc file can be edited by hand), checks that the macro may run now, then calls the `gcode` command handler with the content (split on newlines, blanks dropped, one line in flight, feeder filter with `[expr]` / `%var=` sharing one context for the whole macro, TravelGuard on every `$J=`, dropped in Alarm). Only `context.__sender__` is passed on, so the console marks the lines as this tab's. Refusals send nothing to the port and emit one `serialport:read` line to the attached sockets, in the form TravelGuard uses:
+
+| Condition (checked in this order) | Console line |
+|---|---|
+| Unknown id | `[MSG:WARN: Kinetiq: macro not run. It no longer exists: reopen the Macros widget to refresh the list]` |
+| Stored content invalid | `[MSG:WARN: Kinetiq: macro "<name>" not run. It is not valid: <rule>]` |
+| Workflow not idle | `… not run. A job is running or paused]` |
+| Exclusive serial use or a settings exchange in progress | `… not run. A settings operation is using the serial port]` |
+| Feeder held (M0/M1/M6) | `… not run. Earlier commands are held (M0/M1/M6): Reset clears them]` |
+| Feeder lines queued or in flight | `… not run. Earlier commands are still being sent: wait for them to finish]` |
+| No status yet / Alarm / not Idle | `… Waiting for controller status]` / `… Alarm: use Home or Unlock first]` / `… Machine is <state>: wait until it is Idle]` |
+
+An accepted run first emits `[MSG:INFO: Kinetiq: running macro "<name>" (n lines)]`. The UI's Probe Z / height-map flags are browser state, so the backend cannot see them between two probe steps; the UI gate (`derive.macroView`) covers that. Note the Feeder's `pending` flag clears when its last line is sent, before that line's `ok`; a run accepted in that window queues behind it (the same as two jogs). **Stopping:** Hold, then Reset (top bar); Reset clears the queued lines (`feeder.reset()`).
+
 ---
 
 ## 8. Coordinates interface (Widget 3)
@@ -316,6 +349,7 @@ interface JobRun { status: 'completed' | 'cancelled' | 'error'; startedAt: numbe
 |---|---|
 | Jog one step | `command(port, 'gcode', '$J=G91 G21 X10 F1000', { __sender__: clientId })`: one axis per press, signed distance, `G21` (or `G20` when the UI is in inches), feed in units/min |
 | Cancel jog | `command(port, 'jogCancel')` → real-time `0x85` (`GrblController.js:1515-1518`) |
+| Keyboard jog (opt-in) | No new emits. Arrow keys / PageUp / PageDown send the same `$J=G91 …` line as the matching pad button, one per keydown (auto-repeat ignored); Escape sends `jogCancel` (idle workflow only). Same guard as the pad; details in `ARCHITECTURE.md` §10.4. |
 | Go to (one axis) | `command(port, 'gcode', '$J=G90 G21 X11 F1000', ctx)`: absolute jog in work coordinates at the jog feed |
 | Zero (one axis) | `command(port, 'gcode', 'G10 L20 P1 X0', ctx)`: P from the active WCS (G54 → 1 … G59 → 6), same as the CNCjs Axes widget |
 | Home (one axis) | `writeln(port, '$HX', ctx)`: FluidNC single-axis homing; direct write so it works from Alarm (the Feeder drops lines in Alarm) |
@@ -364,4 +398,4 @@ Observed on FluidNC v4.0.1: feed hold (`!`) on an **idle** machine puts FluidNC 
 
 Still in the backend but unused: the `write` event. Not carried over: the CNCjs REST API.
 
-Removed from the embedded backend: `tool:change` and `lasertest:*` (2026-11-08); `macro:run`, `macro:load`, `watchdir:load`, `autolevel:*` (6), `rapidOverride`, `sleep`, `statusreport`, `feeder:feed`, `feeder:start`, `feeder:stop` and the `start`/`stop`/`pause`/`resume` aliases (rewrite phase 1, 2026-11-09). The authoritative command list is `ControllerCommands` in `src/server/protocol.ts`.
+Removed from the embedded backend: `tool:change` and `lasertest:*` (2026-11-08); CNCjs's `macro:run` and `macro:load` (macros stored in the rc `macros` list), `watchdir:load`, `autolevel:*` (6), `rapidOverride`, `sleep`, `statusreport`, `feeder:feed`, `feeder:start`, `feeder:stop` and the `start`/`stop`/`pause`/`resume` aliases (rewrite phase 1, 2026-11-09). Kinetiq's own `macro:run` (by id, macros in `kinetiq.macros`, §7.6) was added on 2026-11-11; `macro:load` (loading a macro as a program) was not brought back. The authoritative command list is `ControllerCommands` in `src/server/protocol.ts`.

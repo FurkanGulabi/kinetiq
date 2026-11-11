@@ -5,7 +5,8 @@
  *    ├── GET /api/kinetiq/session → JWT for the Socket.IO handshake
  *    ├── /api/kinetiq/jobs/*     → job library (uploaded G-code + recent runs)
  *    ├── /api/kinetiq/machine-config → FluidNC config read (settings editor)
- *    ├── /socket.io/*            → SocketEngine (src/server/engine, Socket.IO 2.2)
+ *    ├── /api/kinetiq/macros/*   → saved macros (list, create, update, delete)
+ *    ├── /socket.io/*            → SocketEngine (src/server/engine, Socket.IO 4)
  *    └── everything else         → Next.js
  *
  * See docs/BACKEND_INTEGRATION.md §5 for the boot order and shutdown behaviour.
@@ -31,6 +32,7 @@ async function main() {
   const { handleSession, SESSION_PATH } = await import('./src/server/session');
   const { handleJobs, JOBS_PATH } = await import('./src/server/jobs');
   const { handleMachineConfig, MACHINE_CONFIG_PATH } = await import('./src/server/fluidnc/machineConfig');
+  const { handleMacros, MACROS_PATH } = await import('./src/server/macros');
 
   const { settings, engine, store } = await loadBackend();
   log(`CNC backend loaded (config: ${settings.rcfile})`);
@@ -50,6 +52,10 @@ async function main() {
     }
     if (url.pathname === MACHINE_CONFIG_PATH || url.pathname?.startsWith(`${MACHINE_CONFIG_PATH}/`)) {
       void handleMachineConfig(req, res, settings, store);
+      return;
+    }
+    if (url.pathname === MACROS_PATH || url.pathname?.startsWith(`${MACROS_PATH}/`)) {
+      void handleMacros(req, res, settings);
       return;
     }
     // Socket.IO requests never reach this handler: Engine.IO (attached by SocketEngine) wraps the

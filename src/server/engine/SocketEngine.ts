@@ -1,11 +1,11 @@
-/// <reference path="../../types/socket.io.d.ts" />
 /**
- * The Socket.IO 2 server the browser talks to
- * (was src/server/cnc/services/cncengine/CNCEngine.js, CNCjs 1.11.5; ported unchanged in rewrite phase 5).
+ * The Socket.IO 4 server the browser talks to
+ * (was src/server/cnc/services/cncengine/CNCEngine.js, CNCjs 1.11.5; ported unchanged in rewrite phase 5,
+ * moved from Socket.IO 2.2 to 4 afterwards).
  *
- * Handshake: socketio-jwt verifies the session token (`?token=`, minted by session.ts), then
- * authorizeIPAddress() and validateUser() (session.ts) run, in that order. A rejected handshake
- * never reaches 'connection'.
+ * Handshake: authenticateSocketToken() verifies the session token (`auth: { token }`, minted by
+ * session.ts; replaces socketio-jwt), then authorizeIPAddress() and validateUser() (session.ts) run,
+ * in that order. A rejected handshake never reaches 'connection'; the client gets `connect_error`.
  *
  * Per socket: `startup` on connect, then the client events of ClientEvents (src/server/protocol.ts):
  * `list`, `open`, `close`, `command`, `write`, `writeln`. Open controllers live in the store
@@ -18,25 +18,20 @@
  */
 import type http from 'http';
 import { SerialPort } from 'serialport';
-import socketIO from 'socket.io';
-import socketioJwt from 'socketio-jwt';
+import { Server, type Socket } from 'socket.io';
 import EventTrigger from '../events/EventTrigger';
 import logger from '../logger';
-import settings from '../config/settings';
 import store from '../store';
 import config from '../config/ConfigStore';
 import taskRunner from '../events/TaskRunner';
 import GrblController from '../controller/GrblController';
-import type { ControllerSocket } from '../controller/GrblController';
 import { GRBL } from '../grbl/constants';
 import ensureArray from '../util/ensureArray';
-import { authorizeIPAddress, validateUser } from '../session';
+import { authenticateSocketToken, authorizeIPAddress, validateUser, type SessionUser } from '../session';
 import type {
   AckCallback,
-  ClientEventName,
   ClientEvents,
   ControllerType,
-  ServerEventName,
   ServerEvents,
   WriteContext
 } from '../protocol';
@@ -45,20 +40,16 @@ const log = logger('service:cncengine');
 
 const noop = (): void => {};
 
-/** The engine's Socket.IO server, with emit() typed by ServerEvents. */
-type EngineServer = Omit<SocketIO.Server, 'emit'> & {
-  emit<E extends ServerEventName>(eventName: E, ...args: Parameters<ServerEvents[E]>): unknown;
-};
-
-/** A connected socket, with its handlers typed by ClientEvents and emit() by ServerEvents. */
-interface EngineSocket extends ControllerSocket {
-  readonly handshake: SocketIO.Handshake;
-  decoded_token?: SocketIO.Socket['decoded_token'];
-  on<E extends ClientEventName>(event: E, listener: ClientEvents[E]): unknown;
-  on(event: 'disconnect', listener: (reason: string) => void): unknown;
-  join(room: string): unknown;
-  leave(room: string): unknown;
+/** Per-socket data: the verified session token payload, set by the handshake middleware. */
+interface EngineSocketData {
+  user: SessionUser;
 }
+
+/** The engine's Socket.IO server: handlers typed by ClientEvents, emit() by ServerEvents. */
+type EngineServer = Server<ClientEvents, ServerEvents, Record<string, never>, EngineSocketData>;
+
+/** A connected socket of EngineServer. */
+type EngineSocket = Socket<ClientEvents, ServerEvents, Record<string, never>, EngineSocketData>;
 
 /** A port as listed: detected by serialport, or an rc `ports` entry (not validated, as in CNCjs). */
 interface ListedPort {
@@ -154,16 +145,28 @@ class SocketEngine {
       this.event.trigger('startup');
 
       this.server = server;
-      const io: EngineServer = socketIO(this.server, {
-        serveClient: true,
+      // Kinetiq: Socket.IO 4 defaults are kept on purpose: no `cors` option, so no CORS headers
+      // (other origins cannot read polling responses; the session token is still the real gate), and
+      // no `allowEIO3` (v2 clients cannot connect). Nothing loads /socket.io/socket.io.js (the UI
+      // bundles socket.io-client), so the client script is not served.
+      const io: EngineServer = new Server(this.server, {
+        serveClient: false,
         path: '/socket.io'
       });
       this.io = io;
 
-      io.use(socketioJwt.authorize({
-        secret: settings.secret,
-        handshake: true
-      }));
+      // Kinetiq: the token check that socketio-jwt did (`handshake: true`), as a plain middleware.
+      // Token from `auth: { token }`, HS256 only, against settings.secret (session.ts).
+      io.use((socket, next) => {
+        try {
+          socket.data.user = authenticateSocketToken(socket.handshake.auth?.token);
+        } catch (err) {
+          log.warn(err);
+          next(err as Error); // carries `data` ({ type, code }) to the client's connect_error
+          return;
+        }
+        next();
+      });
 
       io.use(async (socket, next) => {
         try {
@@ -172,7 +175,7 @@ class SocketEngine {
           await authorizeIPAddress(ipaddr);
 
           // User Validation
-          const user = socket.decoded_token || {};
+          const user = socket.data.user || {};
           await validateUser(user);
         } catch (err) {
           log.warn(err);
@@ -185,7 +188,7 @@ class SocketEngine {
 
       io.on('connection', (socket: EngineSocket) => {
         const address = socket.handshake.address;
-        const user = socket.decoded_token || {};
+        const user = socket.data.user || {};
         log.debug(`New connection from ${address}: id=${socket.id}, user.id=${user.id}, user.name=${user.name}`);
 
         // Add to the socket pool
